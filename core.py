@@ -91,6 +91,7 @@ last_candle_time = None
 
 # ================= LOOP =================
 while True:
+    print("In loop")
     df = get_data()
     df = add_indicators(df)
     df = add_15m_bias(df)
