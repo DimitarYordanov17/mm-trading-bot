@@ -3,6 +3,7 @@ import pandas as pd
 import pytz
 import time
 from datetime import datetime
+import requests
 
 # ================= SETTINGS =================
 SYMBOL = "XAUUSD"
@@ -11,6 +12,22 @@ TP_LEVELS = [5, 10, 20, 50]
 SL = 10
 
 timezone = pytz.timezone("Europe/Sofia")
+
+# ================= Telegram Bot Settings =================
+# Your Telegram Bot API token (from BotFather)
+API_TOKEN = 'your_bot_token'  # Replace with your actual bot token
+# Your Telegram chat ID (the chat where messages will be sent)
+CHAT_ID = 'your_chat_id'  # Replace with your actual chat ID
+
+# Function to send a message to Telegram
+def send_telegram_message(message):
+    url = f"https://api.telegram.org/bot{API_TOKEN}/sendMessage"
+    payload = {
+        'chat_id': CHAT_ID,  # The correct chat ID goes here
+        'text': message
+    }
+    response = requests.post(url, data=payload)
+    return response
 
 # ================= CONNECT =================
 if not mt5.initialize():
@@ -79,6 +96,12 @@ def check_signal(row):
     buy = bull and price_between and (row["rsi"] > row["rsi_ma"]) and row["bias_buy"]
     sell = bear and price_between and (row["rsi"] < row["rsi_ma"]) and row["bias_sell"]
 
+    # Send signal to Telegram if conditions are met
+    if buy:
+        send_telegram_message(f"🚀 Buy Signal at {price}")
+    elif sell:
+        send_telegram_message(f"❌ Sell Signal at {price}")
+
     return buy, sell
 
 # ================= SESSION =================
@@ -91,7 +114,6 @@ last_candle_time = None
 
 # ================= LOOP =================
 while True:
-    print("In loop")
     df = get_data()
     df = add_indicators(df)
     df = add_15m_bias(df)
