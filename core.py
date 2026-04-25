@@ -4,6 +4,12 @@ import pytz
 import time
 from datetime import datetime
 import requests
+from dotenv import load_dotenv
+import os
+import random
+
+# Load environment variables from .env file
+load_dotenv()
 
 # ================= SETTINGS =================
 SYMBOL = "XAUUSD"
@@ -11,19 +17,17 @@ TIMEFRAME = mt5.TIMEFRAME_M1
 TP_LEVELS = [5, 10, 20, 50]
 SL = 10
 
-timezone = pytz.timezone("Europe/Sofia")
+timezone = pytz.timezone("Europe/Sofia")  # Bulgarian time zone
 
 # ================= Telegram Bot Settings =================
-# Your Telegram Bot API token (from BotFather)
-API_TOKEN = 'your_bot_token'  # Replace with your actual bot token
-# Your Telegram chat ID (the chat where messages will be sent)
-CHAT_ID = 'your_chat_id'  # Replace with your actual chat ID
+API_TOKEN = os.getenv("TELEGRAM_API_TOKEN")  # Get token from .env file
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")  # Get chat ID from .env file
 
 # Function to send a message to Telegram
 def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{API_TOKEN}/sendMessage"
     payload = {
-        'chat_id': CHAT_ID,  # The correct chat ID goes here
+        'chat_id': CHAT_ID,
         'text': message
     }
     response = requests.post(url, data=payload)
@@ -84,6 +88,10 @@ def add_15m_bias(df):
 # ================= SIGNAL =================
 def check_signal(row):
     price = row["close"]
+    trade_id = random.randint(1000, 9999)  # Random trade ID for simulation
+
+    # Local Bulgarian time for trade start
+    trade_time = datetime.now(timezone).strftime("%Y-%m-%d %H:%M:%S")
 
     price_between = (
         (price < row["ema_fast"] and price > row["ema_slow"]) or
@@ -96,11 +104,15 @@ def check_signal(row):
     buy = bull and price_between and (row["rsi"] > row["rsi_ma"]) and row["bias_buy"]
     sell = bear and price_between and (row["rsi"] < row["rsi_ma"]) and row["bias_sell"]
 
-    # Send signal to Telegram if conditions are met
+    # Verbose messages with time and trade ID
     if buy:
-        send_telegram_message(f"🚀 Buy Signal at {price}")
+        message = f"⚡️ EXPERIMENTAL: Buy Signal at {price}\nTrade ID: {trade_id}\nTime: {trade_time} (Bulgarian time)"
+        print(message)
+        send_telegram_message(message)
     elif sell:
-        send_telegram_message(f"❌ Sell Signal at {price}")
+        message = f"⚡️ EXPERIMENTAL: Sell Signal at {price}\nTrade ID: {trade_id}\nTime: {trade_time} (Bulgarian time)"
+        print(message)
+        send_telegram_message(message)
 
     return buy, sell
 
