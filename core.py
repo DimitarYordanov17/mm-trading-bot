@@ -25,13 +25,19 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")  # Get chat ID from .env file
 
 # Function to send a message to Telegram
 def send_telegram_message(message):
-    url = f"https://api.telegram.org/bot{API_TOKEN}/sendMessage"
-    payload = {
-        'chat_id': CHAT_ID,
-        'text': message
-    }
-    response = requests.post(url, data=payload)
-    return response
+    try:
+        url = f"https://api.telegram.org/bot{API_TOKEN}/sendMessage"
+        payload = {
+            'chat_id': CHAT_ID,  # The correct chat ID goes here
+            'text': message
+        }
+        print(f"Debug: Sending message to Telegram... {message}")  # Verbose log for debugging
+        response = requests.post(url, data=payload)
+        print(f"Debug: Telegram response: {response.status_code}, {response.text}")  # Log Telegram response
+        return response
+    except Exception as e:
+        print(f"❌ Error sending Telegram message: {e}")
+        return None
 
 # ================= CONNECT =================
 if not mt5.initialize():
@@ -104,15 +110,34 @@ def check_signal(row):
     buy = bull and price_between and (row["rsi"] > row["rsi_ma"]) and row["bias_buy"]
     sell = bear and price_between and (row["rsi"] < row["rsi_ma"]) and row["bias_sell"]
 
-    # Verbose messages with time and trade ID
+    # Collect the messages for all events
+    messages = []
+
     if buy:
-        message = f"⚡️ EXPERIMENTAL: Buy Signal at {price}\nTrade ID: {trade_id}\nTime: {trade_time} (Bulgarian time)"
-        print(message)
-        send_telegram_message(message)
-    elif sell:
-        message = f"⚡️ EXPERIMENTAL: Sell Signal at {price}\nTrade ID: {trade_id}\nTime: {trade_time} (Bulgarian time)"
-        print(message)
-        send_telegram_message(message)
+        messages.append(f"⚡️ EXPERIMENTAL: Buy Signal at {price}\nTrade ID: {trade_id}\nTime: {trade_time} (Bulgarian time)")
+    
+    if sell:
+        messages.append(f"⚡️ EXPERIMENTAL: Sell Signal at {price}\nTrade ID: {trade_id}\nTime: {trade_time} (Bulgarian time)")
+
+    # Add TP and SL hits to the message
+    if position is not None:
+        tp_message = []
+        for tp in position["tp_levels"]:
+            tp_price = position["entry"] + tp if position["type"] == "BUY" else position["entry"] - tp
+            if price >= tp_price if position["type"] == "BUY" else price <= tp_price:
+                tp_message.append(f"🎯 TP Hit at {tp_price}")
+        
+        if len(tp_message) > 0:
+            messages.append("\n".join(tp_message))
+
+        # SL check
+        if (position["type"] == "BUY" and price <= position["sl"]) or \
+           (position["type"] == "SELL" and price >= position["sl"]):
+            messages.append("❌ SL Hit")
+
+    if messages:
+        full_message = "\n".join(messages)
+        send_telegram_message(full_message)
 
     return buy, sell
 
@@ -123,66 +148,70 @@ def in_session(t):
 # ================= STATE =================
 position = None
 last_candle_time = None
+last_check_time = None  # Keep track of the last check time
 
 # ================= LOOP =================
 while True:
-    df = get_data()
-    df = add_indicators(df)
-    df = add_15m_bias(df)
+    now = datetime.now(timezone)
+    if last_check_time is None or (now - last_check_time).seconds >= 300:  # 300 seconds = 5 minutes
+        df = get_data()
+        df = add_indicators(df)
+        df = add_15m_bias(df)
 
-    row = df.iloc[-1]
-    price = row["close"]
-    now = row["time"]
+        row = df.iloc[-1]
+        price = row["close"]
 
-    # ===== Only act on NEW candle =====
-    if last_candle_time == now:
-        time.sleep(1)
-        continue
+        # ===== Only act on NEW candle =====
+        if last_candle_time == row["time"]:
+            time.sleep(1)
+            continue
 
-    last_candle_time = now
+        last_candle_time = row["time"]
 
-    print(f"\n🕒 {now} | Price: {price}")
+        print(f"\n🕒 {now} | Price: {price}")
 
-    # ===== MANAGE TRADE =====
-    if position is not None:
-        new_tp = []
+        # ===== MANAGE TRADE =====
+        if position is not None:
+            new_tp = []
 
-        for tp in position["tp_levels"]:
-            tp_price = position["entry"] + tp if position["type"] == "BUY" else position["entry"] - tp
+            for tp in position["tp_levels"]:
+                tp_price = position["entry"] + tp if position["type"] == "BUY" else position["entry"] - tp
 
-            hit = price >= tp_price if position["type"] == "BUY" else price <= tp_price
+                hit = price >= tp_price if position["type"] == "BUY" else price <= tp_price
 
-            if hit:
-                print(f"🎯 TP{TP_LEVELS.index(tp)+1} HIT (+{tp})")
-            else:
-                new_tp.append(tp)
+                if hit:
+                    print(f"🎯 TP{TP_LEVELS.index(tp)+1} HIT (+{tp})")
+                else:
+                    new_tp.append(tp)
 
-        position["tp_levels"] = new_tp
+            position["tp_levels"] = new_tp
 
-        # SL check
-        if (position["type"] == "BUY" and price <= position["sl"]) or \
-           (position["type"] == "SELL" and price >= position["sl"]):
+            # SL check
+            if (position["type"] == "BUY" and price <= position["sl"]) or \
+               (position["type"] == "SELL" and price >= position["sl"]):
 
-            print("❌ SL HIT")
-            position = None
+                print("❌ SL HIT")
+                position = None
 
-        elif len(position["tp_levels"]) == 0:
-            print("✅ ALL TP HIT")
-            position = None
+            elif len(position["tp_levels"]) == 0:
+                print("✅ ALL TP HIT")
+                position = None
 
-    # ===== ENTRY =====
-    if position is None and in_session(now):
-        buy, sell = check_signal(row)
+        # ===== ENTRY =====
+        if position is None and in_session(now):
+            buy, sell = check_signal(row)
 
-        if buy or sell:
-            position = {
-                "type": "BUY" if buy else "SELL",
-                "entry": price,
-                "sl": price - SL if buy else price + SL,
-                "tp_levels": TP_LEVELS.copy()
-            }
+            if buy or sell:
+                position = {
+                    "type": "BUY" if buy else "SELL",
+                    "entry": price,
+                    "sl": price - SL if buy else price + SL,
+                    "tp_levels": TP_LEVELS.copy()
+                }
 
-            print(f"🚀 {position['type']} SIGNAL @ {price}")
-            print(f"SL: {position['sl']} | TP: {TP_LEVELS}")
+                print(f"🚀 {position['type']} SIGNAL @ {price}")
+                print(f"SL: {position['sl']} | TP: {TP_LEVELS}")
+
+        last_check_time = now  # Update the last check time
 
     time.sleep(1)
