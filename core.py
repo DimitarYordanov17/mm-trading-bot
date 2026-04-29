@@ -30,12 +30,17 @@ SL_ROI = -1
 
 LOG_FILE = "trades_log.csv"
 STATUS_PRINT_EVERY_SECONDS = 600
+OUTSIDE_SESSION_SLEEP_SECONDS = 30
 
 timezone = pytz.timezone("Europe/Sofia")
 
 
 def bg_time_str():
     return datetime.now(timezone).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def in_session(t):
+    return 8 <= t.hour < 20
 
 
 def log_trade_event(trade_id, trade_type, event, entry, price=None, tp_level=None, roi_pct=None):
@@ -161,10 +166,6 @@ def check_signal(row):
     return buy, sell
 
 
-def in_session(t):
-    return 8 <= t.hour < 20
-
-
 def build_initial_signal_message(position):
     direction = "LONG" if position["type"] == "BUY" else "SHORT"
     emoji = "🟢" if direction == "LONG" else "🔴"
@@ -204,6 +205,7 @@ def build_all_tp_hit_message(price):
 position = None
 last_candle_time = None
 last_status_print = 0
+last_outside_session_print = 0
 
 
 while True:
@@ -222,6 +224,7 @@ while True:
         now = row["time"]
 
         current_ts = time.time()
+
         if current_ts - last_status_print >= STATUS_PRINT_EVERY_SECONDS:
             print(f"\n✅ Bot alive | {bg_time_str()} BG | Latest candle: {now} | Price: {price}")
             last_status_print = current_ts
@@ -231,6 +234,17 @@ while True:
             continue
 
         last_candle_time = now
+
+        # HARD SESSION CONSTRAINT:
+        # Bot does nothing outside 08:00–20:00 Bulgarian time.
+        # No new entries, no TP updates, no SL updates.
+        if not in_session(now):
+            if current_ts - last_outside_session_print >= STATUS_PRINT_EVERY_SECONDS:
+                print(f"\n⏸ Outside session | Bot paused | {bg_time_str()} BG | Allowed: 08:00–20:00 BG")
+                last_outside_session_print = current_ts
+
+            time.sleep(OUTSIDE_SESSION_SLEEP_SECONDS)
+            continue
 
         if position is not None:
             trade_updates = []
@@ -315,7 +329,7 @@ while True:
                 print(f"\n✅ ALL TP HIT | Trade {position['id']}")
                 position = None
 
-        if position is None and in_session(now):
+        if position is None:
             buy, sell = check_signal(row)
 
             if buy or sell:
@@ -341,7 +355,6 @@ while True:
                 )
 
                 msg = build_initial_signal_message(position)
-
                 telegram_response = send_telegram_message(msg)
 
                 if telegram_response and telegram_response.get("ok"):
