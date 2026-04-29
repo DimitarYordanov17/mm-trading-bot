@@ -21,12 +21,13 @@ TIMEFRAME = mt5.TIMEFRAME_M1
 TP_LEVELS = [5, 10, 20, 50]
 SL = 10
 
-STATUS_PRINT_EVERY_SECONDS = 600  # 10 minutes
+STATUS_PRINT_EVERY_SECONDS = 600
 
 timezone = pytz.timezone("Europe/Sofia")
 
+
 # ================= TELEGRAM =================
-def send_telegram_message(message):
+def send_telegram_message(message, reply_to_message_id=None):
     if not TELEGRAM_API_TOKEN or not TELEGRAM_CHAT_ID:
         print("❌ Telegram env missing: TELEGRAM_API_TOKEN or TELEGRAM_CHAT_ID")
         return None
@@ -38,6 +39,9 @@ def send_telegram_message(message):
             "text": message
         }
 
+        if reply_to_message_id:
+            payload["reply_to_message_id"] = reply_to_message_id
+
         print("\n📤 Sending Telegram message:")
         print(message)
 
@@ -46,7 +50,7 @@ def send_telegram_message(message):
         print(f"📩 Telegram response: {response.status_code}")
         print(response.text)
 
-        return response
+        return response.json() if response.ok else None
 
     except Exception as e:
         print(f"❌ Telegram send failed: {e}")
@@ -142,22 +146,47 @@ def bg_time_str():
     return datetime.now(timezone).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def build_tp_prices(position):
-    prices = []
+def build_initial_signal_message(position):
+    direction = "LONG" if position["type"] == "BUY" else "SHORT"
+    emoji = "🟢" if direction == "LONG" else "🔴"
 
-    for tp in TP_LEVELS:
-        if position["type"] == "BUY":
-            prices.append(position["entry"] + tp)
-        else:
-            prices.append(position["entry"] - tp)
+    return (
+        f"{emoji} {direction} Signal\n\n"
+        f"🆔 Trade ID: {position['id']}\n"
+        f"📍 Entry: {position['entry']}\n"
+        f"🕒 Time: {position['opened_at']} Bulgarian time"
+    )
 
-    return prices
+
+def build_tp_update_message(tp_index, tp_percent, price):
+    return (
+        f"✅ TP{tp_index} hit ({tp_percent}%)\n"
+        f"💰 Price: {price}\n"
+        f"🕒 Time: {bg_time_str()} Bulgarian time"
+    )
+
+
+def build_sl_update_message(price):
+    return (
+        f"❌ SL hit\n"
+        f"💰 Price: {price}\n"
+        f"🕒 Time: {bg_time_str()} Bulgarian time"
+    )
+
+
+def build_all_tp_hit_message(price):
+    return (
+        f"✅ All TP hit\n"
+        f"💰 Price: {price}\n"
+        f"🕒 Time: {bg_time_str()} Bulgarian time"
+    )
 
 
 # ================= STATE =================
 position = None
 last_candle_time = None
 last_status_print = 0
+
 
 # ================= LOOP =================
 while True:
@@ -175,13 +204,11 @@ while True:
         price = row["close"]
         now = row["time"]
 
-        # ===== Status check only every 10 min =====
         current_ts = time.time()
         if current_ts - last_status_print >= STATUS_PRINT_EVERY_SECONDS:
             print(f"\n✅ Bot alive | {bg_time_str()} BG | Latest candle: {now} | Price: {price}")
             last_status_print = current_ts
 
-        # ===== Only act on new candle =====
         if last_candle_time == now:
             time.sleep(1)
             continue
@@ -204,62 +231,45 @@ while True:
                     hit = price <= tp_price
 
                 if hit:
-                    msg = (
-                        f"🎯 EXPERIMENTAL TP{tp_index} HIT\n\n"
-                        f"Trade ID: {position['id']}\n"
-                        f"Type: {position['type']}\n"
-                        f"Symbol: {SYMBOL}\n"
-                        f"Entry: {position['entry']}\n"
-                        f"TP{tp_index}: {tp_price}\n"
-                        f"Current Price: {price}\n"
-                        f"Time: {bg_time_str()} Bulgarian time"
-                    )
-
+                    msg = build_tp_update_message(tp_index, tp, price)
                     print(f"\n🎯 TP{tp_index} HIT | Trade {position['id']} | Price: {price}")
                     trade_updates.append(msg)
-
                 else:
                     remaining_tp.append(tp)
 
             position["tp_levels"] = remaining_tp
 
-            # Send TP updates
             for msg in trade_updates:
-                send_telegram_message(msg)
+                send_telegram_message(
+                    msg,
+                    reply_to_message_id=position.get("telegram_message_id")
+                )
 
-            # SL check
+            # ===== SL CHECK =====
             if (
                 (position["type"] == "BUY" and price <= position["sl"]) or
                 (position["type"] == "SELL" and price >= position["sl"])
             ):
-                msg = (
-                    f"❌ EXPERIMENTAL SL HIT\n\n"
-                    f"Trade ID: {position['id']}\n"
-                    f"Type: {position['type']}\n"
-                    f"Symbol: {SYMBOL}\n"
-                    f"Entry: {position['entry']}\n"
-                    f"SL: {position['sl']}\n"
-                    f"Current Price: {price}\n"
-                    f"Time: {bg_time_str()} Bulgarian time"
-                )
+                msg = build_sl_update_message(price)
 
                 print(f"\n❌ SL HIT | Trade {position['id']} | Price: {price}")
-                send_telegram_message(msg)
+
+                send_telegram_message(
+                    msg,
+                    reply_to_message_id=position.get("telegram_message_id")
+                )
 
                 position = None
 
             elif len(position["tp_levels"]) == 0:
-                msg = (
-                    f"✅ EXPERIMENTAL ALL TP HIT\n\n"
-                    f"Trade ID: {position['id']}\n"
-                    f"Type: {position['type']}\n"
-                    f"Symbol: {SYMBOL}\n"
-                    f"Entry: {position['entry']}\n"
-                    f"Time: {bg_time_str()} Bulgarian time"
-                )
+                msg = build_all_tp_hit_message(price)
 
                 print(f"\n✅ ALL TP HIT | Trade {position['id']}")
-                send_telegram_message(msg)
+
+                send_telegram_message(
+                    msg,
+                    reply_to_message_id=position.get("telegram_message_id")
+                )
 
                 position = None
 
@@ -277,28 +287,22 @@ while True:
                     "entry": price,
                     "sl": price - SL if buy else price + SL,
                     "tp_levels": TP_LEVELS.copy(),
-                    "opened_at": bg_time_str()
+                    "opened_at": bg_time_str(),
+                    "telegram_message_id": None
                 }
 
-                tp_prices = build_tp_prices(position)
-
-                msg = (
-                    f"⚡️ EXPERIMENTAL {trade_type} SIGNAL\n\n"
-                    f"Trade ID: {trade_id}\n"
-                    f"Symbol: {SYMBOL}\n"
-                    f"Entry: {price}\n"
-                    f"SL: {position['sl']}\n"
-                    f"TP1: {tp_prices[0]}\n"
-                    f"TP2: {tp_prices[1]}\n"
-                    f"TP3: {tp_prices[2]}\n"
-                    f"TP4: {tp_prices[3]}\n"
-                    f"Time: {position['opened_at']} Bulgarian time"
-                )
+                msg = build_initial_signal_message(position)
 
                 print(f"\n🚀 {trade_type} SIGNAL | Trade {trade_id} | Entry: {price}")
-                print(f"SL: {position['sl']} | TP prices: {tp_prices}")
+                print(f"SL: {position['sl']} | TP levels: {position['tp_levels']}")
 
-                send_telegram_message(msg)
+                telegram_response = send_telegram_message(msg)
+
+                if telegram_response and telegram_response.get("ok"):
+                    position["telegram_message_id"] = telegram_response["result"]["message_id"]
+                    print(f"✅ Stored Telegram message ID: {position['telegram_message_id']}")
+                else:
+                    print("⚠️ Could not store Telegram message ID. Updates may not reply correctly.")
 
         time.sleep(1)
 
