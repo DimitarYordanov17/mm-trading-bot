@@ -53,7 +53,7 @@ Live alerts channel
 
 Below is a sample of how signals and updates are delivered in the Telegram channel:
 
-![Telegram Signal Demo](demo.png)
+![Telegram Signal Demo](screenshot.png)
 
 This demonstrates:
 
