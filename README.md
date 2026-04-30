@@ -47,3 +47,17 @@ Virtual TP / SL monitoring
     ↓
 Telegram Bot
 Live alerts channel
+```
+
+## Example Output
+
+Below is a sample of how signals and updates are delivered in the Telegram channel:
+
+![Telegram Signal Demo](demo.png)
+
+This demonstrates:
+
+- Clean LONG/SHORT signal formatting
+- Trade ID and entry tracking
+- Real-time TP/SL update replies
+- Minimal, readable structure for fast decision-making
