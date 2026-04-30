@@ -34,6 +34,21 @@ OUTSIDE_SESSION_SLEEP_SECONDS = 30
 
 timezone = pytz.timezone("Europe/Sofia")
 
+OPEN_MESSAGES = [
+    "🌅 Session opened | Bot is now active until 20:00 BG time.",
+    "🟢 Trading window opened | Monitoring XAUUSD signals.",
+    "⚡ Session started | Signals are active from 08:00 to 20:00 BG time.",
+    "📈 Good morning | XAUUSD monitoring is now live."
+]
+
+CLOSE_MESSAGES = [
+    "🌙 Session closed | Bot paused until 08:00 BG time.",
+    "🔴 Trading window closed | No signals or updates until tomorrow.",
+    "⏸ Session ended | Bot is now paused outside active hours.",
+    "📉 End of session | Monitoring stops until 08:00 BG time."
+]
+
+
 def now_bg():
     return datetime.now(timezone)
 
@@ -44,6 +59,14 @@ def bg_time_str():
 
 def in_session(t):
     return 8 <= t.hour < 20
+
+
+def build_session_open_message():
+    return random.choice(OPEN_MESSAGES)
+
+
+def build_session_close_message():
+    return random.choice(CLOSE_MESSAGES)
 
 
 def log_trade_event(trade_id, trade_type, event, entry, price=None, tp_level=None, roi_pct=None):
@@ -209,6 +232,7 @@ position = None
 last_candle_time = None
 last_status_print = 0
 last_outside_session_print = 0
+last_session_state = None
 
 
 while True:
@@ -227,6 +251,20 @@ while True:
         now = row["time"]
 
         current_ts = time.time()
+        session_active = in_session(now_bg())
+
+        if last_session_state is None:
+            last_session_state = session_active
+
+        elif session_active != last_session_state:
+            if session_active:
+                send_telegram_message(build_session_open_message())
+                print(f"\n🟢 SESSION OPENED | {bg_time_str()} BG")
+            else:
+                send_telegram_message(build_session_close_message())
+                print(f"\n🔴 SESSION CLOSED | {bg_time_str()} BG")
+
+            last_session_state = session_active
 
         if current_ts - last_status_print >= STATUS_PRINT_EVERY_SECONDS:
             print(f"\n✅ Bot alive | {bg_time_str()} BG | Latest candle: {now} | Price: {price}")
@@ -238,10 +276,7 @@ while True:
 
         last_candle_time = now
 
-        # HARD SESSION CONSTRAINT:
-        # Bot does nothing outside 08:00–20:00 Bulgarian time.
-        # No new entries, no TP updates, no SL updates.
-        if not in_session(now_bg()):
+        if not session_active:
             if current_ts - last_outside_session_print >= STATUS_PRINT_EVERY_SECONDS:
                 print(f"\n⏸ Outside session | Bot paused | {bg_time_str()} BG | Allowed: 08:00–20:00 BG")
                 last_outside_session_print = current_ts
