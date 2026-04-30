@@ -134,6 +134,7 @@ def get_data(n=300):
         return None
 
     df = pd.DataFrame(rates)
+
     df["time"] = pd.to_datetime(df["time"], unit="s")
     df["time"] = df["time"].dt.tz_localize("UTC").dt.tz_convert(timezone)
 
@@ -270,12 +271,6 @@ while True:
             print(f"\n✅ Bot alive | {bg_time_str()} BG | Latest candle: {now} | Price: {price}")
             last_status_print = current_ts
 
-        if last_candle_time == now:
-            time.sleep(1)
-            continue
-
-        last_candle_time = now
-
         if not session_active:
             if current_ts - last_outside_session_print >= STATUS_PRINT_EVERY_SECONDS:
                 print(f"\n⏸ Outside session | Bot paused | {bg_time_str()} BG | Allowed: 08:00–20:00 BG")
@@ -283,6 +278,12 @@ while True:
 
             time.sleep(OUTSIDE_SESSION_SLEEP_SECONDS)
             continue
+
+        if last_candle_time == now:
+            time.sleep(1)
+            continue
+
+        last_candle_time = now
 
         if position is not None:
             trade_updates = []
