@@ -34,6 +34,9 @@ OUTSIDE_SESSION_SLEEP_SECONDS = 30
 
 timezone = pytz.timezone("Europe/Sofia")
 
+def now_bg():
+    return datetime.now(timezone)
+
 
 def bg_time_str():
     return datetime.now(timezone).strftime("%Y-%m-%d %H:%M:%S")
@@ -238,7 +241,7 @@ while True:
         # HARD SESSION CONSTRAINT:
         # Bot does nothing outside 08:00–20:00 Bulgarian time.
         # No new entries, no TP updates, no SL updates.
-        if not in_session(now):
+        if not in_session(now_bg()):
             if current_ts - last_outside_session_print >= STATUS_PRINT_EVERY_SECONDS:
                 print(f"\n⏸ Outside session | Bot paused | {bg_time_str()} BG | Allowed: 08:00–20:00 BG")
                 last_outside_session_print = current_ts
