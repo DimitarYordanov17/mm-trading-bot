@@ -19,9 +19,9 @@ TIMEFRAME = mt5.TIMEFRAME_M1
 
 TP_LEVELS = [5, 10, 20, 50]
 TP_ROI_LABELS = {
-    5: 1,
-    10: 2,
-    20: 3,
+    5: 0.5,
+    10: 1,
+    20: 2,
     50: 5
 }
 
@@ -35,17 +35,31 @@ OUTSIDE_SESSION_SLEEP_SECONDS = 30
 timezone = pytz.timezone("Europe/Sofia")
 
 OPEN_MESSAGES = [
-    "🌅 Session opened | Bot is now active until 20:00 BG time.",
-    "🟢 Trading window opened | Monitoring XAUUSD signals.",
-    "⚡ Session started | Signals are active from 08:00 to 20:00 BG time.",
-    "📈 Good morning | XAUUSD monitoring is now live."
+    "🌅 Сесията започна | Ботът следи XAUUSD до 20:00.",
+    "🟢 Пазарният прозорец е отворен | Започваме наблюдение.",
+    "⚡ Старт на сесията | Сигналите са активни до 20:00.",
+    "📈 Добро утро | XAUUSD мониторингът е активен."
+]
+
+MONDAY_OPEN_MESSAGES = [
+    "🌅 Нова седмица, нова сесия | Ботът отново следи XAUUSD.",
+    "🟢 Понеделник старт | Мониторингът на XAUUSD е активен.",
+    "📈 Пазарът се събуди | Започваме седмицата.",
+    "⚡ Нова търговска седмица | Следим за сигнали."
 ]
 
 CLOSE_MESSAGES = [
-    "🌙 Session closed | Bot paused until 08:00 BG time.",
-    "🔴 Trading window closed | No signals or updates until tomorrow.",
-    "⏸ Session ended | Bot is now paused outside active hours.",
-    "📉 End of session | Monitoring stops until 08:00 BG time."
+    "🌙 Сесията приключи | Ботът е паузиран до 08:00.",
+    "🔴 Пазарният прозорец затвори | Няма нови сигнали до утре.",
+    "⏸ Край на сесията | Мониторингът е спрян извън работните часове.",
+    "📉 Денят приключи | Ботът спира до следващата сесия."
+]
+
+FRIDAY_CLOSE_MESSAGES = [
+    "🌙 Петъчната сесия приключи | Приятен уикенд!",
+    "🔴 Край на седмицата | Ботът спира до понеделник. Приятен уикенд!",
+    "⏸ XAUUSD затваря за уикенда | Почиваме до понеделник.",
+    "📉 Седмицата приключи | Успешен и спокоен уикенд!"
 ]
 
 
@@ -57,16 +71,42 @@ def bg_time_str():
     return datetime.now(timezone).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def is_weekday(t):
+    return t.weekday() < 5
+
+
+def is_friday(t):
+    return t.weekday() == 4
+
+
+def is_monday(t):
+    return t.weekday() == 0
+
+
 def in_session(t):
-    return 8 <= t.hour < 20
+    return is_weekday(t) and 8 <= t.hour < 20
 
 
-def build_session_open_message():
+def build_session_open_message(t):
+    if is_monday(t):
+        return random.choice(MONDAY_OPEN_MESSAGES)
     return random.choice(OPEN_MESSAGES)
 
 
-def build_session_close_message():
+def build_session_close_message(t):
+    if is_friday(t):
+        return random.choice(FRIDAY_CLOSE_MESSAGES)
     return random.choice(CLOSE_MESSAGES)
+
+
+def format_pct(value):
+    return f"{value:g}%"
+
+
+def get_tp_price(position, tp):
+    if position["type"] == "BUY":
+        return position["entry"] + tp
+    return position["entry"] - tp
 
 
 def log_trade_event(trade_id, trade_type, event, entry, price=None, tp_level=None, roi_pct=None):
@@ -134,7 +174,6 @@ def get_data(n=300):
         return None
 
     df = pd.DataFrame(rates)
-
     df["time"] = pd.to_datetime(df["time"], unit="s")
     df["time"] = df["time"].dt.tz_localize("UTC").dt.tz_convert(timezone)
 
@@ -197,17 +236,25 @@ def build_initial_signal_message(position):
     direction = "LONG" if position["type"] == "BUY" else "SHORT"
     emoji = "🟢" if direction == "LONG" else "🔴"
 
+    tp_lines = []
+    for i, tp in enumerate(TP_LEVELS, start=1):
+        tp_price = get_tp_price(position, tp)
+        roi_pct = TP_ROI_LABELS[tp]
+        tp_lines.append(f"🎯 TP{i}: {tp_price} ({format_pct(roi_pct)})")
+
     return (
         f"{emoji} {direction} Signal\n\n"
         f"🆔 Trade ID: {position['id']}\n"
         f"📍 Entry: {position['entry']}\n"
+        f"🛑 SL: {position['sl']} ({format_pct(SL_ROI)})\n"
+        f"{chr(10).join(tp_lines)}\n"
         f"🕒 Time: {position['opened_at']} Bulgarian time"
     )
 
 
 def build_tp_update_message(tp_index, roi_pct, price):
     return (
-        f"✅ TP{tp_index} hit ({roi_pct}%)\n"
+        f"✅ TP{tp_index} hit ({format_pct(roi_pct)})\n"
         f"💰 Price: {price}\n"
         f"🕒 Time: {bg_time_str()} Bulgarian time"
     )
@@ -215,7 +262,7 @@ def build_tp_update_message(tp_index, roi_pct, price):
 
 def build_sl_update_message(price):
     return (
-        f"❌ SL hit ({SL_ROI}%)\n"
+        f"❌ SL hit ({format_pct(SL_ROI)})\n"
         f"💰 Price: {price}\n"
         f"🕒 Time: {bg_time_str()} Bulgarian time"
     )
@@ -223,7 +270,7 @@ def build_sl_update_message(price):
 
 def build_all_tp_hit_message(price):
     return (
-        f"✅ All TP hit (5%)\n"
+        f"✅ All TP hit\n"
         f"💰 Price: {price}\n"
         f"🕒 Time: {bg_time_str()} Bulgarian time"
     )
@@ -252,17 +299,18 @@ while True:
         now = row["time"]
 
         current_ts = time.time()
-        session_active = in_session(now_bg())
+        current_time = now_bg()
+        session_active = in_session(current_time)
 
         if last_session_state is None:
             last_session_state = session_active
 
         elif session_active != last_session_state:
             if session_active:
-                send_telegram_message(build_session_open_message())
+                send_telegram_message(build_session_open_message(current_time))
                 print(f"\n🟢 SESSION OPENED | {bg_time_str()} BG")
             else:
-                send_telegram_message(build_session_close_message())
+                send_telegram_message(build_session_close_message(current_time))
                 print(f"\n🔴 SESSION CLOSED | {bg_time_str()} BG")
 
             last_session_state = session_active
@@ -273,7 +321,7 @@ while True:
 
         if not session_active:
             if current_ts - last_outside_session_print >= STATUS_PRINT_EVERY_SECONDS:
-                print(f"\n⏸ Outside session | Bot paused | {bg_time_str()} BG | Allowed: 08:00–20:00 BG")
+                print(f"\n⏸ Outside session | Bot paused | {bg_time_str()} BG | Allowed: Mon–Fri 08:00–20:00 BG")
                 last_outside_session_print = current_ts
 
             time.sleep(OUTSIDE_SESSION_SLEEP_SECONDS)
@@ -357,7 +405,7 @@ while True:
                     event="ALL_TP_HIT",
                     entry=position["entry"],
                     price=price,
-                    roi_pct=5
+                    roi_pct=TP_ROI_LABELS[50]
                 )
 
                 send_telegram_message(
