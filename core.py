@@ -159,6 +159,15 @@ def send_telegram_message(message, reply_to_message_id=None):
         return None
 
 
+def build_session_close_trade_message(position, price):
+    return (
+        f"⏸ Trade paused at session close\n"
+        f"🆔 Trade ID: {position['id']}\n"
+        f"💰 Last price: {price}\n"
+        f"🕒 Time: {bg_time_str()} Bulgarian time"
+    )
+
+
 if not mt5.initialize():
     print("❌ MT5 initialization failed")
     quit()
@@ -310,6 +319,23 @@ while True:
                 send_telegram_message(build_session_open_message(current_time))
                 print(f"\n🟢 SESSION OPENED | {bg_time_str()} BG")
             else:
+                if position is not None:
+                    log_trade_event(
+                        trade_id=position["id"],
+                        trade_type=position["type"],
+                        event="SESSION_CLOSE",
+                        entry=position["entry"],
+                        price=price
+                    )
+
+                    send_telegram_message(
+                        build_session_close_trade_message(position, price),
+                        reply_to_message_id=position.get("telegram_message_id")
+                    )
+
+                    print(f"\n⏸ SESSION CLOSE TRADE EXIT | Trade {position['id']} | Price: {price}")
+                    position = None
+
                 send_telegram_message(build_session_close_message(current_time))
                 print(f"\n🔴 SESSION CLOSED | {bg_time_str()} BG")
 
