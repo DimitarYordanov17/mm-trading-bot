@@ -1,0 +1,112 @@
+
+===== STRATEGY SUMMARY =====
+
+Exit TP1
+Finalized trades: 8
+Wins: 5
+Losses: 3
+Breakeven: 0
+Win rate: 62.50%
+Total ROI: -0.50%
+Average ROI/trade: -0.06%
+Excluded/session-close: 0
+Still open/incomplete: 0
+
+Exit TP2
+Finalized trades: 7
+Wins: 4
+Losses: 3
+Breakeven: 0
+Win rate: 57.14%
+Total ROI: 1.00%
+Average ROI/trade: 0.14%
+Excluded/session-close: 0
+Still open/incomplete: 1
+
+Exit TP3
+Finalized trades: 7
+Wins: 4
+Losses: 3
+Breakeven: 0
+Win rate: 57.14%
+Total ROI: 5.00%
+Average ROI/trade: 0.71%
+Excluded/session-close: 0
+Still open/incomplete: 1
+
+Exit TP4
+Finalized trades: 6
+Wins: 3
+Losses: 3
+Breakeven: 0
+Win rate: 50.00%
+Total ROI: 12.00%
+Average ROI/trade: 2.00%
+Excluded/session-close: 0
+Still open/incomplete: 2
+
+Scaling 25/25/25/25
+Finalized trades: 6
+Wins: 3
+Losses: 3
+Breakeven: 0
+Win rate: 50.00%
+Total ROI: 3.38%
+Average ROI/trade: 0.56%
+Excluded/session-close: 0
+Still open/incomplete: 2
+
+===== DAY-WISE ROI BY STRATEGY =====
+2026-04-30 | Exit TP1 | Trades: 5 | Wins: 3 | Losses: 2 | ROI: -0.50%
+2026-04-30 | Exit TP2 | Trades: 4 | Wins: 2 | Losses: 2 | ROI: 0.00%
+2026-04-30 | Exit TP3 | Trades: 4 | Wins: 2 | Losses: 2 | ROI: 2.00%
+2026-04-30 | Exit TP4 | Trades: 3 | Wins: 1 | Losses: 2 | ROI: 3.00%
+2026-04-30 | Scaling 25/25/25/25 | Trades: 3 | Wins: 1 | Losses: 2 | ROI: 0.12%
+2026-05-01 | Exit TP1 | Trades: 3 | Wins: 2 | Losses: 1 | ROI: 0.00%
+2026-05-01 | Exit TP2 | Trades: 3 | Wins: 2 | Losses: 1 | ROI: 1.00%
+2026-05-01 | Exit TP3 | Trades: 3 | Wins: 2 | Losses: 1 | ROI: 3.00%
+2026-05-01 | Exit TP4 | Trades: 3 | Wins: 2 | Losses: 1 | ROI: 9.00%
+2026-05-01 | Scaling 25/25/25/25 | Trades: 3 | Wins: 2 | Losses: 1 | ROI: 3.25%
+
+===== TRADE DETAILS =====
+ trade_id       date  type   entry            strategy  target    roi result
+     9478 2026-04-30  LONG 4577.28            Exit TP1     TP1 -1.00%   LOSS
+     9478 2026-04-30  LONG 4577.28            Exit TP2     TP2 -1.00%   LOSS
+     9478 2026-04-30  LONG 4577.28            Exit TP3     TP3 -1.00%   LOSS
+     9478 2026-04-30  LONG 4577.28            Exit TP4     TP4 -1.00%   LOSS
+     9478 2026-04-30  LONG 4577.28 Scaling 25/25/25/25 TP1-TP4 -1.00%   LOSS
+     3400 2026-04-30 SHORT 4546.90            Exit TP1     TP1 -1.00%   LOSS
+     3400 2026-04-30 SHORT 4546.90            Exit TP2     TP2 -1.00%   LOSS
+     3400 2026-04-30 SHORT 4546.90            Exit TP3     TP3 -1.00%   LOSS
+     3400 2026-04-30 SHORT 4546.90            Exit TP4     TP4 -1.00%   LOSS
+     3400 2026-04-30 SHORT 4546.90 Scaling 25/25/25/25 TP1-TP4 -1.00%   LOSS
+     5565 2026-04-30  LONG 4563.43            Exit TP1     TP1  0.50%    WIN
+     5565 2026-04-30  LONG 4563.43            Exit TP2     TP2  1.00%    WIN
+     5565 2026-04-30  LONG 4563.43            Exit TP3     TP3  2.00%    WIN
+     5565 2026-04-30  LONG 4563.43            Exit TP4     TP4  5.00%    WIN
+     5565 2026-04-30  LONG 4563.43 Scaling 25/25/25/25 TP1-TP4  2.12%    WIN
+     5890 2026-04-30  LONG 4614.91            Exit TP1     TP1  0.50%    WIN
+     5890 2026-04-30  LONG 4614.91            Exit TP2     TP2  1.00%    WIN
+     5890 2026-04-30  LONG 4614.91            Exit TP3     TP3  2.00%    WIN
+     5890 2026-04-30  LONG 4614.91            Exit TP4     TP4          OPEN
+     5890 2026-04-30  LONG 4614.91 Scaling 25/25/25/25 TP1-TP4          OPEN
+     2166 2026-04-30 SHORT 4614.99            Exit TP1     TP1  0.50%    WIN
+     2166 2026-04-30 SHORT 4614.99            Exit TP2     TP2          OPEN
+     2166 2026-04-30 SHORT 4614.99            Exit TP3     TP3          OPEN
+     2166 2026-04-30 SHORT 4614.99            Exit TP4     TP4          OPEN
+     2166 2026-04-30 SHORT 4614.99 Scaling 25/25/25/25 TP1-TP4          OPEN
+     5784 2026-05-01 SHORT 4613.75            Exit TP1     TP1  0.50%    WIN
+     5784 2026-05-01 SHORT 4613.75            Exit TP2     TP2  1.00%    WIN
+     5784 2026-05-01 SHORT 4613.75            Exit TP3     TP3  2.00%    WIN
+     5784 2026-05-01 SHORT 4613.75            Exit TP4     TP4  5.00%    WIN
+     5784 2026-05-01 SHORT 4613.75 Scaling 25/25/25/25 TP1-TP4  2.12%    WIN
+     9028 2026-05-01  LONG 4593.15            Exit TP1     TP1  0.50%    WIN
+     9028 2026-05-01  LONG 4593.15            Exit TP2     TP2  1.00%    WIN
+     9028 2026-05-01  LONG 4593.15            Exit TP3     TP3  2.00%    WIN
+     9028 2026-05-01  LONG 4593.15            Exit TP4     TP4  5.00%    WIN
+     9028 2026-05-01  LONG 4593.15 Scaling 25/25/25/25 TP1-TP4  2.12%    WIN
+     9191 2026-05-01  LONG 4640.48            Exit TP1     TP1 -1.00%   LOSS
+     9191 2026-05-01  LONG 4640.48            Exit TP2     TP2 -1.00%   LOSS
+     9191 2026-05-01  LONG 4640.48            Exit TP3     TP3 -1.00%   LOSS
+     9191 2026-05-01  LONG 4640.48            Exit TP4     TP4 -1.00%   LOSS
+     9191 2026-05-01  LONG 4640.48 Scaling 25/25/25/25 TP1-TP4 -1.00%   LOSS
