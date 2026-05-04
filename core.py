@@ -25,6 +25,8 @@ TP_ROI_LABELS = {
     50: 5
 }
 
+PIPS_PER_DOLLAR = 100
+
 SL = 10
 SL_ROI = -1
 
@@ -73,6 +75,10 @@ def bg_time_str():
     return datetime.now(timezone).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def telegram_time_str():
+    return datetime.now(timezone).strftime("%H:%M")
+
+
 def is_weekday(t):
     return t.weekday() < 5
 
@@ -105,6 +111,23 @@ def format_pct(value):
     return f"{value:g}%"
 
 
+def price_move_to_pips(move):
+    return int(round(move * PIPS_PER_DOLLAR))
+
+
+def format_pips(pips):
+    sign = "+" if pips > 0 else ""
+    return f"{sign}{pips} pips"
+
+
+def get_tp_pips(tp):
+    return price_move_to_pips(tp)
+
+
+def get_sl_pips():
+    return -price_move_to_pips(SL)
+
+
 def get_tp_price(position, tp):
     if position["type"] == "BUY":
         return position["entry"] + tp
@@ -121,6 +144,16 @@ def calculate_unrealized_roi(position, price):
     return max(SL_ROI, min(5, roi))
 
 
+def calculate_unrealized_pips(position, price):
+    if position["type"] == "BUY":
+        move = price - position["entry"]
+    else:
+        move = position["entry"] - price
+
+    pips = price_move_to_pips(move)
+    return max(get_sl_pips(), min(get_tp_pips(50), pips))
+
+
 def calculate_session_close_roi(position, price):
     max_roi_reached = position.get("max_roi_reached", 0)
 
@@ -130,13 +163,48 @@ def calculate_session_close_roi(position, price):
     return calculate_unrealized_roi(position, price)
 
 
-def log_trade_event(trade_id, trade_type, event, entry, price=None, tp_level=None, roi_pct=None):
+def calculate_session_close_pips(position, price):
+    max_pips_reached = position.get("max_pips_reached", 0)
+
+    if max_pips_reached > 0:
+        return max_pips_reached
+
+    return calculate_unrealized_pips(position, price)
+
+
+def ensure_log_schema():
+    expected_columns = [
+        "trade_id", "type", "event", "entry", "price",
+        "tp_level", "roi_pct", "pips", "time"
+    ]
+
+    if not os.path.exists(LOG_FILE):
+        return
+
+    try:
+        df = pd.read_csv(LOG_FILE)
+
+        changed = False
+        for col in expected_columns:
+            if col not in df.columns:
+                df[col] = ""
+                changed = True
+
+        if changed:
+            df = df[expected_columns]
+            df.to_csv(LOG_FILE, index=False, encoding="utf-8")
+
+    except Exception as e:
+        print(f"❌ Failed to migrate log schema: {e}")
+
+
+def log_trade_event(trade_id, trade_type, event, entry, price=None, tp_level=None, roi_pct=None, pips=None):
     file_exists = os.path.exists(LOG_FILE)
 
     with open(LOG_FILE, "a", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=[
             "trade_id", "type", "event", "entry", "price",
-            "tp_level", "roi_pct", "time"
+            "tp_level", "roi_pct", "pips", "time"
         ])
 
         if not file_exists:
@@ -150,6 +218,7 @@ def log_trade_event(trade_id, trade_type, event, entry, price=None, tp_level=Non
             "price": price,
             "tp_level": tp_level,
             "roi_pct": roi_pct,
+            "pips": pips,
             "time": bg_time_str()
         })
 
@@ -218,7 +287,9 @@ def poll_telegram_commands(price):
             if chat_id != str(TELEGRAM_CHAT_ID):
                 continue
 
-            if text in ["/price", "/price@kickpicks_bot"]:
+            command = text.split()[0] if text else ""
+
+            if command.startswith("/price"):
                 send_telegram_message(
                     build_price_message(price),
                     reply_to_message_id=message_id
@@ -231,23 +302,25 @@ def poll_telegram_commands(price):
 def build_price_message(price):
     return (
         f"💰 XAUUSD Price: {price}\n"
-        f"🕒 Time: {bg_time_str()} Bulgarian time"
+        f"🕒 Time: {telegram_time_str()} Bulgarian time"
     )
 
 
-def build_session_close_trade_message(position, price, roi_pct):
+def build_session_close_trade_message(position, price, roi_pct, pips):
     return (
         f"⏸ Trade closed at session end\n"
         f"🆔 Trade ID: {position['id']}\n"
         f"💰 Close price: {price}\n"
-        f"📊 Session result: {format_pct(roi_pct)}\n"
-        f"🕒 Time: {bg_time_str()} Bulgarian time"
+        f"📊 Session result: {format_pips(pips)}\n"
+        f"🕒 Time: {telegram_time_str()} Bulgarian time"
     )
 
 
 if not mt5.initialize():
     print("❌ MT5 initialization failed")
     quit()
+
+ensure_log_schema()
 
 print("✅ Connected to MT5")
 
@@ -324,41 +397,35 @@ def build_initial_signal_message(position):
 
     tp_lines = []
     for i, tp in enumerate(TP_LEVELS, start=1):
-        tp_price = get_tp_price(position, tp)
-        roi_pct = TP_ROI_LABELS[tp]
-        tp_lines.append(f"🎯 TP{i}: {tp_price} ({format_pct(roi_pct)})")
+        tp_lines.append(f"🎯 TP{i}: {format_pips(get_tp_pips(tp))}")
 
     return (
         f"{emoji} {direction} Signal\n\n"
         f"🆔 Trade ID: {position['id']}\n"
         f"📍 Entry: {position['entry']}\n"
-        f"🛑 SL: {position['sl']} ({format_pct(SL_ROI)})\n"
+        f"🛑 SL: {format_pips(get_sl_pips())}\n"
         f"{chr(10).join(tp_lines)}\n"
-        f"🕒 Time: {position['opened_at']} Bulgarian time"
     )
 
 
-def build_tp_update_message(tp_index, roi_pct, price):
+def build_tp_update_message(tp_index, pips, price):
     return (
-        f"✅ TP{tp_index} hit ({format_pct(roi_pct)})\n"
+        f"✅ TP{tp_index} hit ({format_pips(pips)})\n"
         f"💰 Price: {price}\n"
-        f"🕒 Time: {bg_time_str()} Bulgarian time"
     )
 
 
 def build_sl_update_message(price):
     return (
-        f"❌ SL hit ({format_pct(SL_ROI)})\n"
+        f"❌ SL hit ({format_pips(get_sl_pips())})\n"
         f"💰 Price: {price}\n"
-        f"🕒 Time: {bg_time_str()} Bulgarian time"
     )
 
 
 def build_all_tp_hit_message(price):
     return (
-        f"✅ All TP hit\n"
+        f"✅ All TP hit ({format_pips(get_tp_pips(50))})\n"
         f"💰 Price: {price}\n"
-        f"🕒 Time: {bg_time_str()} Bulgarian time"
     )
 
 
@@ -400,6 +467,7 @@ while True:
             else:
                 if position is not None:
                     session_close_roi = calculate_session_close_roi(position, price)
+                    session_close_pips = calculate_session_close_pips(position, price)
 
                     log_trade_event(
                         trade_id=position["id"],
@@ -407,17 +475,24 @@ while True:
                         event="SESSION_CLOSE",
                         entry=position["entry"],
                         price=price,
-                        roi_pct=session_close_roi
+                        roi_pct=session_close_roi,
+                        pips=session_close_pips
                     )
 
                     send_telegram_message(
-                        build_session_close_trade_message(position, price, session_close_roi),
+                        build_session_close_trade_message(
+                            position,
+                            price,
+                            session_close_roi,
+                            session_close_pips
+                        ),
                         reply_to_message_id=position.get("telegram_message_id")
                     )
 
                     print(
                         f"\n⏸ SESSION CLOSE TRADE EXIT | "
-                        f"Trade {position['id']} | Price: {price} | ROI: {session_close_roi}"
+                        f"Trade {position['id']} | Price: {price} | "
+                        f"ROI: {session_close_roi} | Pips: {session_close_pips}"
                     )
 
                     position = None
@@ -452,6 +527,7 @@ while True:
             for tp in position["tp_levels"]:
                 tp_index = TP_LEVELS.index(tp) + 1
                 roi_pct = TP_ROI_LABELS[tp]
+                pips = get_tp_pips(tp)
 
                 if position["type"] == "BUY":
                     hit = price >= position["entry"] + tp
@@ -459,12 +535,17 @@ while True:
                     hit = price <= position["entry"] - tp
 
                 if hit:
-                    msg = build_tp_update_message(tp_index, roi_pct, price)
+                    msg = build_tp_update_message(tp_index, pips, price)
                     trade_updates.append(msg)
 
                     position["max_roi_reached"] = max(
                         position.get("max_roi_reached", 0),
                         roi_pct
+                    )
+
+                    position["max_pips_reached"] = max(
+                        position.get("max_pips_reached", 0),
+                        pips
                     )
 
                     log_trade_event(
@@ -474,10 +555,11 @@ while True:
                         entry=position["entry"],
                         price=price,
                         tp_level=f"TP{tp_index}",
-                        roi_pct=roi_pct
+                        roi_pct=roi_pct,
+                        pips=pips
                     )
 
-                    print(f"\n🎯 TP{tp_index} HIT | Trade {position['id']} | Price: {price}")
+                    print(f"\n🎯 TP{tp_index} HIT | Trade {position['id']} | Price: {price} | Pips: {pips}")
 
                 else:
                     remaining_tp.append(tp)
@@ -502,7 +584,8 @@ while True:
                     event="SL_HIT",
                     entry=position["entry"],
                     price=price,
-                    roi_pct=SL_ROI
+                    roi_pct=SL_ROI,
+                    pips=get_sl_pips()
                 )
 
                 send_telegram_message(
@@ -510,7 +593,7 @@ while True:
                     reply_to_message_id=position.get("telegram_message_id")
                 )
 
-                print(f"\n❌ SL HIT | Trade {position['id']} | Price: {price}")
+                print(f"\n❌ SL HIT | Trade {position['id']} | Price: {price} | Pips: {get_sl_pips()}")
                 position = None
 
             elif len(position["tp_levels"]) == 0:
@@ -522,7 +605,8 @@ while True:
                     event="ALL_TP_HIT",
                     entry=position["entry"],
                     price=price,
-                    roi_pct=TP_ROI_LABELS[50]
+                    roi_pct=TP_ROI_LABELS[50],
+                    pips=get_tp_pips(50)
                 )
 
                 send_telegram_message(
@@ -530,7 +614,7 @@ while True:
                     reply_to_message_id=position.get("telegram_message_id")
                 )
 
-                print(f"\n✅ ALL TP HIT | Trade {position['id']}")
+                print(f"\n✅ ALL TP HIT | Trade {position['id']} | Pips: {get_tp_pips(50)}")
                 position = None
 
         if position is None:
@@ -548,7 +632,8 @@ while True:
                     "tp_levels": TP_LEVELS.copy(),
                     "opened_at": bg_time_str(),
                     "telegram_message_id": None,
-                    "max_roi_reached": 0
+                    "max_roi_reached": 0,
+                    "max_pips_reached": 0
                 }
 
                 log_trade_event(
