@@ -62,6 +62,8 @@ FRIDAY_CLOSE_MESSAGES = [
     "📉 Седмицата приключи | Успешен и спокоен уикенд!"
 ]
 
+telegram_last_update_id = None
+
 
 def now_bg():
     return datetime.now(timezone)
@@ -107,6 +109,25 @@ def get_tp_price(position, tp):
     if position["type"] == "BUY":
         return position["entry"] + tp
     return position["entry"] - tp
+
+
+def calculate_unrealized_roi(position, price):
+    if position["type"] == "BUY":
+        move = price - position["entry"]
+    else:
+        move = position["entry"] - price
+
+    roi = move / SL
+    return max(SL_ROI, min(5, roi))
+
+
+def calculate_session_close_roi(position, price):
+    max_roi_reached = position.get("max_roi_reached", 0)
+
+    if max_roi_reached > 0:
+        return max_roi_reached
+
+    return calculate_unrealized_roi(position, price)
 
 
 def log_trade_event(trade_id, trade_type, event, entry, price=None, tp_level=None, roi_pct=None):
@@ -159,11 +180,67 @@ def send_telegram_message(message, reply_to_message_id=None):
         return None
 
 
-def build_session_close_trade_message(position, price):
+def poll_telegram_commands(price):
+    global telegram_last_update_id
+
+    if not TELEGRAM_API_TOKEN or not TELEGRAM_CHAT_ID:
+        return
+
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_API_TOKEN}/getUpdates"
+        params = {
+            "timeout": 1,
+            "allowed_updates": ["message", "channel_post"]
+        }
+
+        if telegram_last_update_id is not None:
+            params["offset"] = telegram_last_update_id + 1
+
+        response = requests.get(url, params=params, timeout=5)
+
+        if not response.ok:
+            print(f"❌ Telegram getUpdates failed: {response.status_code}")
+            return
+
+        data = response.json()
+
+        for update in data.get("result", []):
+            telegram_last_update_id = update["update_id"]
+
+            message = update.get("message") or update.get("channel_post")
+            if not message:
+                continue
+
+            chat_id = str(message.get("chat", {}).get("id"))
+            text = str(message.get("text", "")).strip().lower()
+            message_id = message.get("message_id")
+
+            if chat_id != str(TELEGRAM_CHAT_ID):
+                continue
+
+            if text in ["/price", "/price@kickpicks_bot"]:
+                send_telegram_message(
+                    build_price_message(price),
+                    reply_to_message_id=message_id
+                )
+
+    except Exception as e:
+        print(f"❌ Telegram command polling failed: {e}")
+
+
+def build_price_message(price):
     return (
-        f"⏸ Trade paused at session close\n"
+        f"💰 XAUUSD Price: {price}\n"
+        f"🕒 Time: {bg_time_str()} Bulgarian time"
+    )
+
+
+def build_session_close_trade_message(position, price, roi_pct):
+    return (
+        f"⏸ Trade closed at session end\n"
         f"🆔 Trade ID: {position['id']}\n"
-        f"💰 Last price: {price}\n"
+        f"💰 Close price: {price}\n"
+        f"📊 Session result: {format_pct(roi_pct)}\n"
         f"🕒 Time: {bg_time_str()} Bulgarian time"
     )
 
@@ -307,6 +384,8 @@ while True:
         price = row["close"]
         now = row["time"]
 
+        poll_telegram_commands(price)
+
         current_ts = time.time()
         current_time = now_bg()
         session_active = in_session(current_time)
@@ -320,20 +399,27 @@ while True:
                 print(f"\n🟢 SESSION OPENED | {bg_time_str()} BG")
             else:
                 if position is not None:
+                    session_close_roi = calculate_session_close_roi(position, price)
+
                     log_trade_event(
                         trade_id=position["id"],
                         trade_type=position["type"],
                         event="SESSION_CLOSE",
                         entry=position["entry"],
-                        price=price
+                        price=price,
+                        roi_pct=session_close_roi
                     )
 
                     send_telegram_message(
-                        build_session_close_trade_message(position, price),
+                        build_session_close_trade_message(position, price, session_close_roi),
                         reply_to_message_id=position.get("telegram_message_id")
                     )
 
-                    print(f"\n⏸ SESSION CLOSE TRADE EXIT | Trade {position['id']} | Price: {price}")
+                    print(
+                        f"\n⏸ SESSION CLOSE TRADE EXIT | "
+                        f"Trade {position['id']} | Price: {price} | ROI: {session_close_roi}"
+                    )
+
                     position = None
 
                 send_telegram_message(build_session_close_message(current_time))
@@ -375,6 +461,11 @@ while True:
                 if hit:
                     msg = build_tp_update_message(tp_index, roi_pct, price)
                     trade_updates.append(msg)
+
+                    position["max_roi_reached"] = max(
+                        position.get("max_roi_reached", 0),
+                        roi_pct
+                    )
 
                     log_trade_event(
                         trade_id=position["id"],
@@ -456,7 +547,8 @@ while True:
                     "sl": price - SL if buy else price + SL,
                     "tp_levels": TP_LEVELS.copy(),
                     "opened_at": bg_time_str(),
-                    "telegram_message_id": None
+                    "telegram_message_id": None,
+                    "max_roi_reached": 0
                 }
 
                 log_trade_event(
