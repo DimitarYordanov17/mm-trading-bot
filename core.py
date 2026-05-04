@@ -75,10 +75,6 @@ def bg_time_str():
     return datetime.now(timezone).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def telegram_time_str():
-    return datetime.now(timezone).strftime("%H:%M")
-
-
 def is_weekday(t):
     return t.weekday() < 5
 
@@ -130,8 +126,8 @@ def get_sl_pips():
 
 def get_tp_price(position, tp):
     if position["type"] == "BUY":
-        return position["entry"] + tp
-    return position["entry"] - tp
+        return round(position["entry"] + tp, 2)
+    return round(position["entry"] - tp, 2)
 
 
 def calculate_unrealized_roi(position, price):
@@ -300,10 +296,7 @@ def poll_telegram_commands(price):
 
 
 def build_price_message(price):
-    return (
-        f"💰 XAUUSD Price: {price}\n"
-        f"🕒 Time: {telegram_time_str()} Bulgarian time"
-    )
+    return f"💰 XAUUSD Price: {price}"
 
 
 def build_session_close_trade_message(position, price, roi_pct, pips):
@@ -311,8 +304,7 @@ def build_session_close_trade_message(position, price, roi_pct, pips):
         f"⏸ Trade closed at session end\n"
         f"🆔 Trade ID: {position['id']}\n"
         f"💰 Close price: {price}\n"
-        f"📊 Session result: {format_pips(pips)}\n"
-        f"🕒 Time: {telegram_time_str()} Bulgarian time"
+        f"📊 Session result: {format_pips(pips)}"
     )
 
 
@@ -397,35 +389,49 @@ def build_initial_signal_message(position):
 
     tp_lines = []
     for i, tp in enumerate(TP_LEVELS, start=1):
-        tp_lines.append(f"🎯 TP{i}: {format_pips(get_tp_pips(tp))}")
+        tp_price = get_tp_price(position, tp)
+        tp_lines.append(f"🎯 TP{i}: {tp_price}")
 
     return (
         f"{emoji} {direction} Signal\n\n"
         f"🆔 Trade ID: {position['id']}\n"
-        f"📍 Entry: {position['entry']}\n"
-        f"🛑 SL: {format_pips(get_sl_pips())}\n"
-        f"{chr(10).join(tp_lines)}\n"
+        f"📍 Entry: {position['entry']}\n\n"
+        f"🛑 SL: {round(position['sl'], 2)}\n"
+        f"{chr(10).join(tp_lines)}"
     )
 
 
-def build_tp_update_message(tp_index, pips, price):
+def build_tp_update_message(tp_index, pips, price, position):
+    direction = "LONG" if position["type"] == "BUY" else "SHORT"
+    tp_price = get_tp_price(position, TP_LEVELS[tp_index - 1])
+
     return (
-        f"✅ TP{tp_index} hit ({format_pips(pips)})\n"
-        f"💰 Price: {price}\n"
+        f"✅ XAUUSD {direction} — TP{tp_index} HIT\n\n"
+        f"🎯 TP{tp_index}: {tp_price}\n"
+        f"📊 Move: {format_pips(pips)}\n"
+        f"💰 Current Price: {price}"
     )
 
 
-def build_sl_update_message(price):
+def build_sl_update_message(price, position):
+    direction = "LONG" if position["type"] == "BUY" else "SHORT"
+
     return (
-        f"❌ SL hit ({format_pips(get_sl_pips())})\n"
-        f"💰 Price: {price}\n"
+        f"❌ XAUUSD {direction} — SL HIT\n\n"
+        f"📊 Move: {format_pips(get_sl_pips())}\n"
+        f"💰 Current Price: {price}"
     )
 
 
-def build_all_tp_hit_message(price):
+def build_all_tp_hit_message(price, position):
+    direction = "LONG" if position["type"] == "BUY" else "SHORT"
+    tp_price = get_tp_price(position, 50)
+
     return (
-        f"✅ All TP hit ({format_pips(get_tp_pips(50))})\n"
-        f"💰 Price: {price}\n"
+        f"✅ XAUUSD {direction} — ALL TP HIT\n\n"
+        f"🎯 TP4: {tp_price}\n"
+        f"📊 Move: {format_pips(get_tp_pips(50))}\n"
+        f"💰 Current Price: {price}"
     )
 
 
@@ -535,7 +541,7 @@ while True:
                     hit = price <= position["entry"] - tp
 
                 if hit:
-                    msg = build_tp_update_message(tp_index, pips, price)
+                    msg = build_tp_update_message(tp_index, pips, price, position)
                     trade_updates.append(msg)
 
                     position["max_roi_reached"] = max(
@@ -576,7 +582,7 @@ while True:
                 (position["type"] == "BUY" and price <= position["sl"]) or
                 (position["type"] == "SELL" and price >= position["sl"])
             ):
-                msg = build_sl_update_message(price)
+                msg = build_sl_update_message(price, position)
 
                 log_trade_event(
                     trade_id=position["id"],
@@ -597,7 +603,7 @@ while True:
                 position = None
 
             elif len(position["tp_levels"]) == 0:
-                msg = build_all_tp_hit_message(price)
+                msg = build_all_tp_hit_message(price, position)
 
                 log_trade_event(
                     trade_id=position["id"],
