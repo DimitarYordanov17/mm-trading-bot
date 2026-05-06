@@ -300,6 +300,17 @@ def build_price_message(price):
 
 
 def build_session_close_trade_message(position, price, roi_pct, pips):
+    max_tp_index = position.get("max_tp_index_reached", 0)
+
+    if max_tp_index > 0:
+        return (
+            f"⏸ Trade closed at session end\n"
+            f"🆔 Trade ID: {position['id']}\n"
+            f"✅ Best result: TP{max_tp_index} hit\n"
+            f"💰 Close price: {price}\n"
+            f"📊 Session result: {format_pips(pips)}"
+        )
+
     return (
         f"⏸ Trade closed at session end\n"
         f"🆔 Trade ID: {position['id']}\n"
@@ -544,6 +555,14 @@ while True:
                     msg = build_tp_update_message(tp_index, pips, price, position)
                     trade_updates.append(msg)
 
+                    # Telegram-specific protection:
+                    # once any TP has been publicly hit, never publicly post a later SL for this trade.
+                    position["telegram_tp_hit"] = True
+                    position["max_tp_index_reached"] = max(
+                        position.get("max_tp_index_reached", 0),
+                        tp_index
+                    )
+
                     position["max_roi_reached"] = max(
                         position.get("max_roi_reached", 0),
                         roi_pct
@@ -594,10 +613,16 @@ while True:
                     pips=get_sl_pips()
                 )
 
-                send_telegram_message(
-                    msg,
-                    reply_to_message_id=position.get("telegram_message_id")
-                )
+                if not position.get("telegram_tp_hit", False):
+                    send_telegram_message(
+                        msg,
+                        reply_to_message_id=position.get("telegram_message_id")
+                    )
+                else:
+                    print(
+                        f"\n🔕 SL HIT not sent to Telegram because TP was already hit | "
+                        f"Trade {position['id']} | Best TP: TP{position.get('max_tp_index_reached', 0)}"
+                    )
 
                 print(f"\n❌ SL HIT | Trade {position['id']} | Price: {price} | Pips: {get_sl_pips()}")
                 position = None
@@ -639,7 +664,9 @@ while True:
                     "opened_at": bg_time_str(),
                     "telegram_message_id": None,
                     "max_roi_reached": 0,
-                    "max_pips_reached": 0
+                    "max_pips_reached": 0,
+                    "max_tp_index_reached": 0,
+                    "telegram_tp_hit": False
                 }
 
                 log_trade_event(
