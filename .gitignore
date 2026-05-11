@@ -1,2 +1,4 @@
 credentials.txt
 trades_log.csv
+.env
+MW.pem
