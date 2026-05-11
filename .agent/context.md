@@ -87,6 +87,13 @@ Both are loaded via `python-dotenv` at startup. If missing, Telegram calls are s
 - TP1 = +0.5%, TP2 = +1%, TP3 = +2%, TP4 = +5%  (relative to SL size as 1R)
 - SL = -1%
 
+### Breakeven Protection (added 2026-05-11)
+- After TP2 is hit, `position["sl"]` is moved to `position["entry"]`.
+- Flag: `position["sl_moved_to_be"]` (bool) — ensures this fires only once per trade.
+- Logged as event `SL_MOVED_BE` in the CSV (price = current, pips = 0).
+- A Telegram reply is sent immediately after the TP2 message in the same candle batch.
+- If SL fires after TP2 → trade closes at entry (0 ROI / BE), not at the original -10 SL.
+
 ---
 
 ## Telegram Message Types
@@ -99,6 +106,7 @@ Both are loaded via `python-dotenv` at startup. If missing, Telegram calls are s
 | TP hit | Each individual TP level crossed |
 | All TP hit | All 4 TPs cleared |
 | SL hit | SL crossed (suppressed if any TP already hit) |
+| **BE update** | TP2 hit → SL moved to entry (🛡️ message) |
 | Session close trade exit | Trade still open when session ends |
 | /price reply | Bot polls for this command from the channel |
 
@@ -114,7 +122,7 @@ trade_id, type, event, entry, price, tp_level, roi_pct, pips, time
 ```
 
 - `type`: LONG or SHORT
-- `event`: OPEN, TP_HIT, SL_HIT, ALL_TP_HIT, SESSION_CLOSE
+- `event`: OPEN, TP_HIT, SL_HIT, ALL_TP_HIT, SESSION_CLOSE, SL_MOVED_BE
 - `tp_level`: TP1–TP4 (only for TP_HIT rows)
 - `roi_pct`: numeric ROI value (0.5, 1, 2, 5, or -1)
 - `pips`: integer pips move (50, 100, 200, 500, or -100)

@@ -108,6 +108,38 @@ def get_scaling_result(group):
     return None, "OPEN"
 
 
+def get_be_protected_result(group):
+    """
+    Simulates holding to TP4 with SL moved to entry after TP2.
+    - SL hit before TP2: LOSS
+    - TP2 hit, then SL hit (BE fires): BREAKEVEN (0%)
+    - TP2 hit, then ALL_TP_HIT: WIN (+5%)
+    - SESSION_CLOSE at any point: EXCLUDED
+    """
+    tp2_hit = False
+
+    for _, row in group.iterrows():
+        event = row["event"]
+        tp_level = normalize_tp_level(row.get("tp_level"))
+
+        if (event == "TP_HIT" and tp_level == "TP2") or event == "SL_MOVED_BE":
+            tp2_hit = True
+            continue
+
+        if event == "ALL_TP_HIT":
+            return TP_ROI["TP4"], "WIN"
+
+        if event == "SL_HIT":
+            if tp2_hit:
+                return 0.0, "BREAKEVEN"
+            return SL_ROI, "LOSS"
+
+        if event == "SESSION_CLOSE":
+            return None, "EXCLUDED"
+
+    return None, "OPEN"
+
+
 def build_trade_rows(df):
     rows = []
 
@@ -147,6 +179,16 @@ def build_trade_rows(df):
             "target": "TP1-TP4",
             "roi": scaling_roi,
             "result": scaling_result,
+        })
+
+        be_roi, be_result = get_be_protected_result(group)
+
+        rows.append({
+            **base,
+            "strategy": "Exit TP4 + BE at TP2",
+            "target": "TP4",
+            "roi": be_roi,
+            "result": be_result,
         })
 
     return pd.DataFrame(rows)
@@ -225,6 +267,73 @@ def print_trade_details(stats):
     print(display.to_string(index=False))
 
 
+def print_be_summary(df):
+    print("\n===== BREAKEVEN-PROTECTED TRADE OUTCOMES =====")
+
+    sl_before_tp2_count = 0
+    be_outcomes = []
+
+    for trade_id, group in df.groupby("trade_id", sort=False):
+        group = group.sort_values("time")
+
+        tp2_hit = False
+        after_tp2 = False
+        best_tp_after = None
+        terminal = "OPEN"
+
+        for _, row in group.iterrows():
+            event = row["event"]
+            tp_level = normalize_tp_level(row.get("tp_level"))
+
+            if (event == "TP_HIT" and tp_level == "TP2") or event == "SL_MOVED_BE":
+                tp2_hit = True
+                after_tp2 = True
+                continue
+
+            if not after_tp2:
+                if event == "SL_HIT":
+                    sl_before_tp2_count += 1
+                    break
+                continue
+
+            if event == "TP_HIT" and tp_level in ("TP3", "TP4"):
+                best_tp_after = tp_level
+            elif event == "ALL_TP_HIT":
+                terminal = "TP4"
+                break
+            elif event == "SL_HIT":
+                terminal = "BE"
+                break
+            elif event == "SESSION_CLOSE":
+                terminal = "SESSION_CLOSE"
+                break
+
+        if not tp2_hit:
+            continue
+
+        if terminal == "OPEN" and best_tp_after:
+            terminal = best_tp_after
+
+        be_outcomes.append(terminal)
+
+    be_total = len(be_outcomes)
+
+    print(f"Trades where SL hit before TP2 (no BE activated): {sl_before_tp2_count}")
+
+    if be_total == 0:
+        print("No trades with TP2 hit found.")
+        return
+
+    counts = {k: be_outcomes.count(k) for k in ("BE", "TP3", "TP4", "SESSION_CLOSE", "OPEN")}
+
+    print(f"\nTrades where TP2 hit (BE active): {be_total}")
+    print(f"  → Ended at BE (SL triggered at entry): {counts['BE']}")
+    print(f"  → Best result TP3 (then unresolved): {counts['TP3']}")
+    print(f"  → Reached TP4 / ALL_TP: {counts['TP4']}")
+    print(f"  → Ended at session close: {counts['SESSION_CLOSE']}")
+    print(f"  → Still open/incomplete: {counts['OPEN']}")
+
+
 def main():
     if not os.path.exists(LOG_FILE):
         print("No trades_log.csv found.")
@@ -261,6 +370,7 @@ def main():
     print_strategy_summary(stats)
     print_day_wise_summary(stats)
     print_trade_details(stats)
+    print_be_summary(df)
 
 
 if __name__ == "__main__":
