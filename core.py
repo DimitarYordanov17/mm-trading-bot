@@ -434,6 +434,16 @@ def build_sl_update_message(price, position):
     )
 
 
+def build_be_message(position, price):
+    return (
+        f"🛡️ Stop moved to breakeven\n\n"
+        f"🆔 Trade ID: {position['id']}\n"
+        f"📍 New SL: {round(position['entry'], 2)}\n"
+        f"⚖️ Risk: no-loss / BE\n"
+        f"🕒 Time: {bg_time_str()} BG"
+    )
+
+
 def build_all_tp_hit_message(price, position):
     direction = "LONG" if position["type"] == "BUY" else "SHORT"
     tp_price = get_tp_price(position, 50)
@@ -586,6 +596,20 @@ while True:
 
                     print(f"\n🎯 TP{tp_index} HIT | Trade {position['id']} | Price: {price} | Pips: {pips}")
 
+                    if tp_index == 2 and not position.get("sl_moved_to_be", False):
+                        position["sl"] = position["entry"]
+                        position["sl_moved_to_be"] = True
+                        trade_updates.append(build_be_message(position, price))
+                        log_trade_event(
+                            trade_id=position["id"],
+                            trade_type=position["type"],
+                            event="SL_MOVED_BE",
+                            entry=position["entry"],
+                            price=price,
+                            pips=0
+                        )
+                        print(f"\n🛡️ SL MOVED TO BE | Trade {position['id']} | New SL: {position['entry']}")
+
                 else:
                     remaining_tp.append(tp)
 
@@ -666,7 +690,8 @@ while True:
                     "max_roi_reached": 0,
                     "max_pips_reached": 0,
                     "max_tp_index_reached": 0,
-                    "telegram_tp_hit": False
+                    "telegram_tp_hit": False,
+                    "sl_moved_to_be": False
                 }
 
                 log_trade_event(
