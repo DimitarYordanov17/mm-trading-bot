@@ -33,6 +33,7 @@ SL_ROI = -1
 LOG_FILE = "trades_log.csv"
 STATUS_PRINT_EVERY_SECONDS = 600
 OUTSIDE_SESSION_SLEEP_SECONDS = 30
+SAME_DIRECTION_COOLDOWN_SECONDS = 30 * 60
 
 timezone = pytz.timezone("Europe/Sofia")
 
@@ -461,6 +462,7 @@ last_candle_time = None
 last_status_print = 0
 last_outside_session_print = 0
 last_session_state = None
+last_full_loss_time = {"BUY": None, "SELL": None}
 
 
 while True:
@@ -649,6 +651,11 @@ while True:
                     )
 
                 print(f"\n❌ SL HIT | Trade {position['id']} | Price: {price} | Pips: {get_sl_pips()}")
+
+                if position.get("max_tp_index_reached", 0) == 0:
+                    last_full_loss_time[position["type"]] = current_ts
+                    print(f"\n⏳ Cooldown started for {position['type']} | 30 min block on same direction")
+
                 position = None
 
             elif len(position["tp_levels"]) == 0:
@@ -677,38 +684,49 @@ while True:
 
             if buy or sell:
                 trade_type = "BUY" if buy else "SELL"
-                trade_id = random.randint(1000, 9999)
 
-                position = {
-                    "id": trade_id,
-                    "type": trade_type,
-                    "entry": price,
-                    "sl": price - SL if buy else price + SL,
-                    "tp_levels": TP_LEVELS.copy(),
-                    "opened_at": bg_time_str(),
-                    "telegram_message_id": None,
-                    "max_roi_reached": 0,
-                    "max_pips_reached": 0,
-                    "max_tp_index_reached": 0,
-                    "telegram_tp_hit": False,
-                    "sl_moved_to_be": False
-                }
-
-                log_trade_event(
-                    trade_id=trade_id,
-                    trade_type=trade_type,
-                    event="OPEN",
-                    entry=price,
-                    price=price
+                last_loss_ts = last_full_loss_time[trade_type]
+                in_cooldown = (
+                    last_loss_ts is not None and
+                    current_ts - last_loss_ts < SAME_DIRECTION_COOLDOWN_SECONDS
                 )
 
-                msg = build_initial_signal_message(position)
-                telegram_response = send_telegram_message(msg)
+                if in_cooldown:
+                    remaining = int(SAME_DIRECTION_COOLDOWN_SECONDS - (current_ts - last_loss_ts))
+                    print(f"\n⏳ {trade_type} signal skipped | Cooldown: {remaining}s remaining after no-TP SL")
+                else:
+                    trade_id = random.randint(1000, 9999)
 
-                if telegram_response and telegram_response.get("ok"):
-                    position["telegram_message_id"] = telegram_response["result"]["message_id"]
+                    position = {
+                        "id": trade_id,
+                        "type": trade_type,
+                        "entry": price,
+                        "sl": price - SL if buy else price + SL,
+                        "tp_levels": TP_LEVELS.copy(),
+                        "opened_at": bg_time_str(),
+                        "telegram_message_id": None,
+                        "max_roi_reached": 0,
+                        "max_pips_reached": 0,
+                        "max_tp_index_reached": 0,
+                        "telegram_tp_hit": False,
+                        "sl_moved_to_be": False
+                    }
 
-                print(f"\n🚀 {trade_type} SIGNAL | Trade {trade_id} | Entry: {price}")
+                    log_trade_event(
+                        trade_id=trade_id,
+                        trade_type=trade_type,
+                        event="OPEN",
+                        entry=price,
+                        price=price
+                    )
+
+                    msg = build_initial_signal_message(position)
+                    telegram_response = send_telegram_message(msg)
+
+                    if telegram_response and telegram_response.get("ok"):
+                        position["telegram_message_id"] = telegram_response["result"]["message_id"]
+
+                    print(f"\n🚀 {trade_type} SIGNAL | Trade {trade_id} | Entry: {price}")
 
         time.sleep(1)
 

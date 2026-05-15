@@ -87,6 +87,15 @@ Both are loaded via `python-dotenv` at startup. If missing, Telegram calls are s
 - TP1 = +0.5%, TP2 = +1%, TP3 = +2%, TP4 = +5%  (relative to SL size as 1R)
 - SL = -1%
 
+### Same-Direction Cooldown After Full Loss (added 2026-05-11)
+- `SAME_DIRECTION_COOLDOWN_SECONDS = 1800` (30 min)
+- `last_full_loss_time = {"BUY": None, "SELL": None}` — in-memory, resets on restart.
+- A "full loss" is SL hit with `max_tp_index_reached == 0` (zero TPs ever hit).
+- After a full loss: the same direction (BUY or SELL) is blocked for 30 min.
+- Opposite direction is unaffected: LONG loss → SHORT signals still fire normally.
+- Blocked signals are skipped silently (no Telegram message); a console print shows remaining cooldown.
+- Not logged to CSV (skipped trades are not trade events).
+
 ### Breakeven Protection (added 2026-05-11)
 - After TP2 is hit, `position["sl"]` is moved to `position["entry"]`.
 - Flag: `position["sl_moved_to_be"]` (bool) — ensures this fires only once per trade.
