@@ -89,10 +89,9 @@ Both are loaded via `python-dotenv` at startup. If missing, Telegram calls are s
 
 ### Same-Direction Cooldown After Full Loss (added 2026-05-11)
 - `SAME_DIRECTION_COOLDOWN_SECONDS = 1800` (30 min)
-- `last_full_loss_time = {"BUY": None, "SELL": None}` — in-memory, resets on restart.
+- `last_full_loss_time = None` — single in-memory timestamp, resets on restart.
 - A "full loss" is SL hit with `max_tp_index_reached == 0` (zero TPs ever hit).
-- After a full loss: the same direction (BUY or SELL) is blocked for 30 min.
-- Opposite direction is unaffected: LONG loss → SHORT signals still fire normally.
+- After a full loss: **all new trades (both directions) are blocked for 30 min**.
 - Blocked signals are skipped silently (no Telegram message); a console print shows remaining cooldown.
 - Not logged to CSV (skipped trades are not trade events).
 

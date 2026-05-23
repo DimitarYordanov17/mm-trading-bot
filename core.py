@@ -462,7 +462,7 @@ last_candle_time = None
 last_status_print = 0
 last_outside_session_print = 0
 last_session_state = None
-last_full_loss_time = {"BUY": None, "SELL": None}
+last_full_loss_time = None
 
 
 while True:
@@ -653,8 +653,8 @@ while True:
                 print(f"\n❌ SL HIT | Trade {position['id']} | Price: {price} | Pips: {get_sl_pips()}")
 
                 if position.get("max_tp_index_reached", 0) == 0:
-                    last_full_loss_time[position["type"]] = current_ts
-                    print(f"\n⏳ Cooldown started for {position['type']} | 30 min block on same direction")
+                    last_full_loss_time = current_ts
+                    print(f"\n⏳ Cooldown started | 30 min block on all directions")
 
                 position = None
 
@@ -685,14 +685,13 @@ while True:
             if buy or sell:
                 trade_type = "BUY" if buy else "SELL"
 
-                last_loss_ts = last_full_loss_time[trade_type]
                 in_cooldown = (
-                    last_loss_ts is not None and
-                    current_ts - last_loss_ts < SAME_DIRECTION_COOLDOWN_SECONDS
+                    last_full_loss_time is not None and
+                    current_ts - last_full_loss_time < SAME_DIRECTION_COOLDOWN_SECONDS
                 )
 
                 if in_cooldown:
-                    remaining = int(SAME_DIRECTION_COOLDOWN_SECONDS - (current_ts - last_loss_ts))
+                    remaining = int(SAME_DIRECTION_COOLDOWN_SECONDS - (current_ts - last_full_loss_time))
                     print(f"\n⏳ {trade_type} signal skipped | Cooldown: {remaining}s remaining after no-TP SL")
                 else:
                     trade_id = random.randint(1000, 9999)

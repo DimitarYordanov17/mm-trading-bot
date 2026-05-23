@@ -25,13 +25,13 @@ instead of re-deriving it from scratch.
 
 ## 2026-05-11
 
-### Same-direction cooldown after full-loss SL
+### Cooldown after full-loss SL — all directions blocked (updated 2026-05-23)
 
 **What changed:**
-- `core.py`: Added `SAME_DIRECTION_COOLDOWN_SECONDS = 30 * 60` constant.
-- `core.py`: Added `last_full_loss_time = {"BUY": None, "SELL": None}` runtime global.
-- `core.py`: In the SL hit block, if `max_tp_index_reached == 0` (no TPs hit): records `current_ts` for that direction.
-- `core.py`: In the signal open block, before creating a position: checks if the signal direction is in cooldown. If yes, skips the trade with a console print. If no, proceeds as before.
+- `core.py`: Changed `last_full_loss_time` from `{"BUY": None, "SELL": None}` to a single `None` timestamp.
+- `core.py`: Cooldown recording now sets `last_full_loss_time = current_ts` (no direction key).
+- `core.py`: Cooldown check now reads `last_full_loss_time` directly (blocks both BUY and SELL).
+- Updated print messages to remove direction wording.
 
 **Files changed:**
 - `core.py`
@@ -39,10 +39,10 @@ instead of re-deriving it from scratch.
 - `.agent/timeline.md`
 
 **Why:**
-Avoid re-entering the same direction immediately after a clean loss (no partial profit). Opposite direction is intentionally allowed.
+Algorithm was failing repeatedly — extending the cooldown to all directions prevents re-entry in either direction after a clean loss, not just the same one.
 
 **Risks / follow-ups:**
-- Cooldown state is in-memory only — a process restart resets both timestamps. Acceptable for MVP.
+- Cooldown state is in-memory only — a process restart resets the timestamp. Acceptable for MVP.
 - If SL fires due to BE (SL moved to entry after TP2), `max_tp_index_reached >= 2` so cooldown does NOT trigger. Correct — that's not a full loss.
 - Cooldown does not clear on session close; it expires naturally by timestamp.
 
