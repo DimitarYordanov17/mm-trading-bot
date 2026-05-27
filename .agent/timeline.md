@@ -83,6 +83,34 @@ Existing logs are sufficient to simulate this retroactively. Event order determi
 
 ---
 
+---
+
+## 2026-05-27
+
+### USD High-Impact News Filter
+
+**What changed:**
+- `core.py`: Added `from datetime import timedelta` to existing datetime import.
+- `core.py`: Added three config constants — `USE_NEWS_FILTER`, `MINUTES_BEFORE_NEWS`, `MINUTES_AFTER_NEWS`.
+- `core.py`: Added `is_high_impact_news_time()` function — queries MT5 economic calendar for USD high-importance events in a ±15 min UTC window around now.
+- `core.py`: Main loop signal guard now checks `is_high_impact_news_time()` after cooldown, before opening any trade.
+- `.agent/context.md`: Added "News Filter" section under trading logic.
+
+**Files changed:**
+- `core.py`
+- `.agent/context.md`
+- `.agent/timeline.md`
+
+**Why:**
+Prevent trade entries around high-impact USD news (e.g. NFP, CPI) where spread widens and price moves are unpredictable.
+
+**Risks / follow-ups:**
+- Requires broker to supply MT5 economic calendar data. If `calendar_value_history` returns `None`, the filter silently passes and trading continues — safe fail-open behavior.
+- `USE_NEWS_FILTER = True` can be toggled to `False` to disable without touching logic.
+- Filter is only evaluated when a signal fires, not on every tick — negligible performance impact.
+
+---
+
 **Original onboarding risks / follow-ups:**
 - `MW.pem` is untracked but not in `.gitignore` — worth adding to avoid accidental commits.
 - Session open/close messages are Bulgarian while signal messages are English — inconsistency to address when cleaning up message formatting.

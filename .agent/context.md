@@ -95,6 +95,14 @@ Both are loaded via `python-dotenv` at startup. If missing, Telegram calls are s
 - Blocked signals are skipped silently (no Telegram message); a console print shows remaining cooldown.
 - Not logged to CSV (skipped trades are not trade events).
 
+### News Filter (added 2026-05-27)
+- `USE_NEWS_FILTER = True` — toggle to disable without code change.
+- `MINUTES_BEFORE_NEWS = 15`, `MINUTES_AFTER_NEWS = 15` — window around each event.
+- `is_high_impact_news_time()` calls `mt5.calendar_value_history()` for a UTC ±15 min window around now, then checks each event via `mt5.calendar_event_getby_id()` for `country_code == "US"` and `importance == 3` (HIGH).
+- If any matching event is found, the signal is skipped (no Telegram message); console prints the event name.
+- Errors (e.g. broker doesn't supply calendar feed) are caught silently — filter returns `False` and trading continues normally.
+- Check order in loop: cooldown → news filter → open trade.
+
 ### Breakeven Protection (added 2026-05-11)
 - After TP2 is hit, `position["sl"]` is moved to `position["entry"]`.
 - Flag: `position["sl_moved_to_be"]` (bool) — ensures this fires only once per trade.
