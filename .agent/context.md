@@ -98,7 +98,7 @@ Both are loaded via `python-dotenv` at startup. If missing, Telegram calls are s
 ### News Filter (added 2026-05-27)
 - `USE_NEWS_FILTER = True` — toggle to disable without code change.
 - `MINUTES_BEFORE_NEWS = 15`, `MINUTES_AFTER_NEWS = 15` — window around each event.
-- `is_high_impact_news_time()` calls `mt5.calendar_value_history()` for a UTC ±15 min window around now, then checks each event via `mt5.calendar_event_getby_id()` for `country_code == "US"` and `importance == 3` (HIGH).
+- `is_high_impact_news_time()` calls `mt5.calendar_values_by_currency("USD", from_dt, to_dt)` for a UTC ±15 min window, then checks each value's event via `mt5.calendar_event_getby_id()` for `importance == 3` (HIGH). Currency filter is applied at the API call — no country_code check needed.
 - If any matching event is found, the signal is skipped (no Telegram message); console prints the event name.
 - Errors (e.g. broker doesn't supply calendar feed) are caught silently — filter returns `False` and trading continues normally.
 - Check order in loop: cooldown → news filter → open trade.

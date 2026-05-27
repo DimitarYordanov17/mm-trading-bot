@@ -109,6 +109,14 @@ Prevent trade entries around high-impact USD news (e.g. NFP, CPI) where spread w
 - `USE_NEWS_FILTER = True` can be toggled to `False` to disable without touching logic.
 - Filter is only evaluated when a signal fires, not on every tick — negligible performance impact.
 
+### 2026-05-27 — News filter fix: wrong MT5 function name + utcnow deprecation
+
+**What changed:**
+- `core.py`: `calendar_value_history` → `calendar_values_by_currency("USD", ...)` (correct Python MT5 API name). Currency filter moved to API call, removed redundant `country_code` check.
+- `core.py`: `datetime.utcnow()` → `datetime.now(UTC)` to fix deprecation warning. Added `UTC = dt_timezone.utc` constant.
+- `core.py`: `AttributeError` now prints available calendar functions for easier future diagnosis.
+- `.agent/context.md`: Updated news filter description.
+
 ---
 
 **Original onboarding risks / follow-ups:**

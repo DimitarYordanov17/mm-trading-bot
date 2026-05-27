@@ -2,7 +2,9 @@ import MetaTrader5 as mt5
 import pandas as pd
 import pytz
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone as dt_timezone
+
+UTC = dt_timezone.utc
 import requests
 from dotenv import load_dotenv
 import os
@@ -337,12 +339,16 @@ def is_high_impact_news_time():
     if not USE_NEWS_FILTER:
         return False
 
-    now = datetime.utcnow()
+    now = datetime.now(UTC)
     from_dt = now - timedelta(minutes=MINUTES_AFTER_NEWS)
     to_dt = now + timedelta(minutes=MINUTES_BEFORE_NEWS)
 
     try:
-        values = mt5.calendar_value_history(from_dt, to_dt)
+        values = mt5.calendar_values_by_currency("USD", from_dt, to_dt)
+    except AttributeError:
+        available = [x for x in dir(mt5) if "calendar" in x.lower()]
+        print(f"⚠️ News filter: calendar_values_by_currency not found. Available: {available}")
+        return False
     except Exception as e:
         print(f"⚠️ News filter error: {e}")
         return False
@@ -353,7 +359,7 @@ def is_high_impact_news_time():
     for v in values:
         try:
             event = mt5.calendar_event_getby_id(v.event_id)
-            if event and event.country_code == "US" and event.importance == 3:
+            if event and event.importance == 3:
                 print(f"📰 Blocked by USD high-impact news: {event.name}")
                 return True
         except Exception:
