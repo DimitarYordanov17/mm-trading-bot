@@ -14,7 +14,8 @@ import csv
 load_dotenv()
 
 TELEGRAM_API_TOKEN = os.getenv("TELEGRAM_API_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")         # premium group
+COMMUNITY_CHAT_ID = os.getenv("COMMUNITY_CHAT_ID")       # community channel
 
 SYMBOL = "XAUUSD"
 TIMEFRAME = mt5.TIMEFRAME_M1
@@ -40,6 +41,11 @@ SAME_DIRECTION_COOLDOWN_SECONDS = 30 * 60
 USE_NEWS_FILTER = True
 MINUTES_BEFORE_NEWS = 15
 MINUTES_AFTER_NEWS = 15
+
+# Confidence threshold for community channel (0.0 - 1.0)
+COMMUNITY_CONFIDENCE_THRESHOLD = 0.65
+# Fallback: if no signal sent to community by this hour (BG time), send best of day
+COMMUNITY_FALLBACK_HOUR = 14
 
 timezone = pytz.timezone("Europe/Sofia")
 
@@ -72,6 +78,12 @@ FRIDAY_CLOSE_MESSAGES = [
 ]
 
 telegram_last_update_id = None
+
+# Daily community tracking
+community_signals_today = []       # list of {position, confidence} sent to community
+best_signal_today = None           # {position, confidence} — best scoring signal seen today
+community_fallback_fired = False   # whether fallback already ran today
+last_community_reset_date = None   # date string to detect day rollover
 
 
 def now_bg():
@@ -159,26 +171,22 @@ def calculate_unrealized_pips(position, price):
 
 def calculate_session_close_roi(position, price):
     max_roi_reached = position.get("max_roi_reached", 0)
-
     if max_roi_reached > 0:
         return max_roi_reached
-
     return calculate_unrealized_roi(position, price)
 
 
 def calculate_session_close_pips(position, price):
     max_pips_reached = position.get("max_pips_reached", 0)
-
     if max_pips_reached > 0:
         return max_pips_reached
-
     return calculate_unrealized_pips(position, price)
 
 
 def ensure_log_schema():
     expected_columns = [
         "trade_id", "type", "event", "entry", "price",
-        "tp_level", "roi_pct", "pips", "time"
+        "tp_level", "roi_pct", "pips", "confidence", "community_sent", "time"
     ]
 
     if not os.path.exists(LOG_FILE):
@@ -186,7 +194,6 @@ def ensure_log_schema():
 
     try:
         df = pd.read_csv(LOG_FILE)
-
         changed = False
         for col in expected_columns:
             if col not in df.columns:
@@ -201,13 +208,14 @@ def ensure_log_schema():
         print(f"❌ Failed to migrate log schema: {e}")
 
 
-def log_trade_event(trade_id, trade_type, event, entry, price=None, tp_level=None, roi_pct=None, pips=None):
+def log_trade_event(trade_id, trade_type, event, entry, price=None, tp_level=None,
+                    roi_pct=None, pips=None, confidence=None, community_sent=False):
     file_exists = os.path.exists(LOG_FILE)
 
     with open(LOG_FILE, "a", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=[
             "trade_id", "type", "event", "entry", "price",
-            "tp_level", "roi_pct", "pips", "time"
+            "tp_level", "roi_pct", "pips", "confidence", "community_sent", "time"
         ])
 
         if not file_exists:
@@ -222,19 +230,24 @@ def log_trade_event(trade_id, trade_type, event, entry, price=None, tp_level=Non
             "tp_level": tp_level,
             "roi_pct": roi_pct,
             "pips": pips,
+            "confidence": round(confidence, 3) if confidence is not None else "",
+            "community_sent": community_sent,
             "time": bg_time_str()
         })
 
 
-def send_telegram_message(message, reply_to_message_id=None):
-    if not TELEGRAM_API_TOKEN or not TELEGRAM_CHAT_ID:
-        print("❌ Telegram env missing")
+def send_telegram_message(message, chat_id=None, reply_to_message_id=None):
+    """Send to premium group by default. Pass chat_id to override."""
+    target_chat_id = chat_id or TELEGRAM_CHAT_ID
+
+    if not TELEGRAM_API_TOKEN or not target_chat_id:
+        print(f"❌ Telegram env missing (chat_id={target_chat_id})")
         return None
 
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_API_TOKEN}/sendMessage"
         payload = {
-            "chat_id": TELEGRAM_CHAT_ID,
+            "chat_id": target_chat_id,
             "text": message
         }
 
@@ -242,7 +255,7 @@ def send_telegram_message(message, reply_to_message_id=None):
             payload["reply_to_message_id"] = reply_to_message_id
 
         response = requests.post(url, data=payload, timeout=10)
-        print(f"\n📩 Telegram response: {response.status_code}")
+        print(f"\n📩 Telegram response ({target_chat_id}): {response.status_code}")
         print(response.text)
 
         return response.json() if response.ok else None
@@ -250,6 +263,11 @@ def send_telegram_message(message, reply_to_message_id=None):
     except Exception as e:
         print(f"❌ Telegram send failed: {e}")
         return None
+
+
+def send_to_community(message):
+    """Send a signal to the community channel."""
+    return send_telegram_message(message, chat_id=COMMUNITY_CHAT_ID)
 
 
 def poll_telegram_commands(price):
@@ -326,6 +344,135 @@ def build_session_close_trade_message(position, price, roi_pct, pips):
     )
 
 
+# ─── Confidence Scoring ───────────────────────────────────────────────────────
+#
+# Score is 0.0 – 1.0 built from 4 components (equal weight, 0.25 each):
+#
+# 1. RSI margin      — how far RSI is above/below its EMA. More separation = stronger.
+# 2. EMA separation  — gap between EMA20 and EMA50 relative to price. Wider = cleaner trend.
+# 3. Price position  — how centered price is between the two EMAs (midpoint = best).
+# 4. 15m bias        — always 1.0 if bias matches direction (it's a hard condition anyway),
+#                      but we keep it weighted so a very fresh bias flip scores lower
+#                      via the rsi_margin component naturally.
+#
+# Tune COMMUNITY_CONFIDENCE_THRESHOLD as data accumulates.
+#
+def score_signal(row, direction):
+    """
+    Returns a confidence float between 0.0 and 1.0.
+    direction: 'BUY' or 'SELL'
+    """
+    is_buy = direction == "BUY"
+
+    # 1. RSI margin (0–0.25)
+    rsi_diff = row["rsi"] - row["rsi_ma"]
+    if not is_buy:
+        rsi_diff = -rsi_diff
+    # Normalise: 0 diff = 0, 10+ diff = full score
+    rsi_score = min(rsi_diff / 10.0, 1.0) * 0.25
+
+    # 2. EMA separation (0–0.25)
+    ema_gap = abs(row["ema_fast"] - row["ema_slow"])
+    price = row["close"]
+    # Normalise: gap of 0.5% of price = full score
+    ema_score = min(ema_gap / (price * 0.005), 1.0) * 0.25
+
+    # 3. Price position between EMAs (0–0.25)
+    # Best when price is near the midpoint of the EMA range (pulling toward the slow EMA)
+    ema_high = max(row["ema_fast"], row["ema_slow"])
+    ema_low = min(row["ema_fast"], row["ema_slow"])
+    ema_range = ema_high - ema_low
+
+    if ema_range > 0:
+        # 0 = at one extreme, 1 = at midpoint
+        pos_ratio = 1.0 - abs((price - ema_low) / ema_range - 0.5) * 2
+    else:
+        pos_ratio = 0.0
+
+    pos_score = max(pos_ratio, 0.0) * 0.25
+
+    # 4. 15m bias (0–0.25) — binary but weighted
+    bias_ok = row["bias_buy"] if is_buy else row["bias_sell"]
+    bias_score = 0.25 if bias_ok else 0.0
+
+    total = rsi_score + ema_score + pos_score + bias_score
+    return round(min(total, 1.0), 4)
+
+
+# ─── Daily community state helpers ────────────────────────────────────────────
+
+def reset_daily_community_state():
+    global community_signals_today, best_signal_today, community_fallback_fired, last_community_reset_date
+    today = now_bg().strftime("%Y-%m-%d")
+    if last_community_reset_date != today:
+        community_signals_today = []
+        best_signal_today = None
+        community_fallback_fired = False
+        last_community_reset_date = today
+        print(f"\n🔄 Community daily state reset | {today}")
+
+
+def maybe_fire_community_fallback():
+    """
+    If it's past COMMUNITY_FALLBACK_HOUR and we haven't sent anything to community today,
+    send the best-scoring signal seen today regardless of threshold.
+    """
+    global community_fallback_fired, best_signal_today
+
+    if community_fallback_fired:
+        return
+    if len(community_signals_today) > 0:
+        return
+    if best_signal_today is None:
+        return
+
+    current_hour = now_bg().hour
+    if current_hour < COMMUNITY_FALLBACK_HOUR:
+        return
+
+    pos = best_signal_today["position"]
+    conf = best_signal_today["confidence"]
+
+    msg = build_community_signal_message(pos, conf, fallback=True)
+    send_to_community(msg)
+    community_signals_today.append(best_signal_today)
+    community_fallback_fired = True
+
+    print(
+        f"\n📤 COMMUNITY FALLBACK | Trade {pos['id']} | "
+        f"Confidence: {conf:.2%} | Sent best signal of day"
+    )
+
+
+def try_send_to_community(position, confidence):
+    """
+    Decide whether to send this signal to community.
+    Always track it as candidate for fallback.
+    """
+    global best_signal_today
+
+    candidate = {"position": position, "confidence": confidence}
+
+    # Track best signal of the day regardless
+    if best_signal_today is None or confidence > best_signal_today["confidence"]:
+        best_signal_today = candidate
+
+    if confidence >= COMMUNITY_CONFIDENCE_THRESHOLD:
+        msg = build_community_signal_message(position, confidence)
+        send_to_community(msg)
+        community_signals_today.append(candidate)
+        print(f"\n📤 COMMUNITY SIGNAL | Trade {position['id']} | Confidence: {confidence:.2%}")
+        return True
+
+    print(
+        f"\n⏭ Community skip | Trade {position['id']} | "
+        f"Confidence {confidence:.2%} < threshold {COMMUNITY_CONFIDENCE_THRESHOLD:.2%}"
+    )
+    return False
+
+
+# ─── MT5 & data ───────────────────────────────────────────────────────────────
+
 if not mt5.initialize():
     print("❌ MT5 initialization failed")
     quit()
@@ -383,16 +530,17 @@ def get_data(n=300):
 
 
 def add_indicators(df):
-    df["ema_fast"] = df["close"].ewm(span=20).mean()
-    df["ema_slow"] = df["close"].ewm(span=50).mean()
+    df["ema_fast"] = df["close"].ewm(span=20, adjust=False).mean()
+    df["ema_slow"] = df["close"].ewm(span=50, adjust=False).mean()
 
     delta = df["close"].diff()
     gain = delta.clip(lower=0).rolling(14).mean()
     loss = (-delta.clip(upper=0)).rolling(14).mean()
     rs = gain / loss
-
     df["rsi"] = 100 - (100 / (1 + rs))
-    df["rsi_ma"] = df["rsi"].rolling(9).mean()
+
+    # RSI MA as EMA(9) — more responsive than SMA on 1m data
+    df["rsi_ma"] = df["rsi"].ewm(span=9, adjust=False).mean()
 
     return df
 
@@ -405,7 +553,7 @@ def add_15m_bias(df):
         "close": "last"
     }).dropna()
 
-    df_15["ema_slow"] = df_15["close"].ewm(span=50).mean()
+    df_15["ema_slow"] = df_15["close"].ewm(span=50, adjust=False).mean()
     df_15["bias_buy"] = df_15["close"] > df_15["ema_slow"]
     df_15["bias_sell"] = df_15["close"] < df_15["ema_slow"]
 
@@ -434,6 +582,8 @@ def check_signal(row):
     return buy, sell
 
 
+# ─── Message builders ─────────────────────────────────────────────────────────
+
 def build_initial_signal_message(position):
     direction = "LONG" if position["type"] == "BUY" else "SHORT"
     emoji = "🟢" if direction == "LONG" else "🔴"
@@ -449,6 +599,28 @@ def build_initial_signal_message(position):
         f"📍 Entry: {position['entry']}\n\n"
         f"🛑 SL: {round(position['sl'], 2)}\n"
         f"{chr(10).join(tp_lines)}"
+    )
+
+
+def build_community_signal_message(position, confidence, fallback=False):
+    direction = "LONG" if position["type"] == "BUY" else "SHORT"
+    emoji = "🟢" if direction == "LONG" else "🔴"
+
+    tp_lines = []
+    for i, tp in enumerate(TP_LEVELS, start=1):
+        tp_price = get_tp_price(position, tp)
+        tp_lines.append(f"🎯 TP{i}: {tp_price}")
+
+    conf_bar = "🔥" if confidence >= 0.80 else ("⚡" if confidence >= 0.65 else "📶")
+    fallback_note = "\n📌 Best signal of the session" if fallback else ""
+
+    return (
+        f"{emoji} {direction} Signal\n\n"
+        f"📍 Entry: {position['entry']}\n\n"
+        f"🛑 SL: {round(position['sl'], 2)}\n"
+        f"{chr(10).join(tp_lines)}\n\n"
+        f"{conf_bar} Confidence: {confidence:.0%}"
+        f"{fallback_note}"
     )
 
 
@@ -496,6 +668,8 @@ def build_all_tp_hit_message(price, position):
     )
 
 
+# ─── Main loop ────────────────────────────────────────────────────────────────
+
 position = None
 last_candle_time = None
 last_status_print = 0
@@ -503,9 +677,10 @@ last_outside_session_print = 0
 last_session_state = None
 last_full_loss_time = None
 
-
 while True:
     try:
+        reset_daily_community_state()
+
         df = get_data()
 
         if df is None:
@@ -544,7 +719,8 @@ while True:
                         entry=position["entry"],
                         price=price,
                         roi_pct=session_close_roi,
-                        pips=session_close_pips
+                        pips=session_close_pips,
+                        confidence=position.get("confidence")
                     )
 
                     send_telegram_message(
@@ -582,6 +758,9 @@ while True:
             time.sleep(OUTSIDE_SESSION_SLEEP_SECONDS)
             continue
 
+        # Check community fallback before candle gate
+        maybe_fire_community_fallback()
+
         if last_candle_time == now:
             time.sleep(1)
             continue
@@ -606,8 +785,6 @@ while True:
                     msg = build_tp_update_message(tp_index, pips, price, position)
                     trade_updates.append(msg)
 
-                    # Telegram-specific protection:
-                    # once any TP has been publicly hit, never publicly post a later SL for this trade.
                     position["telegram_tp_hit"] = True
                     position["max_tp_index_reached"] = max(
                         position.get("max_tp_index_reached", 0),
@@ -632,7 +809,8 @@ while True:
                         price=price,
                         tp_level=f"TP{tp_index}",
                         roi_pct=roi_pct,
-                        pips=pips
+                        pips=pips,
+                        confidence=position.get("confidence")
                     )
 
                     print(f"\n🎯 TP{tp_index} HIT | Trade {position['id']} | Price: {price} | Pips: {pips}")
@@ -647,7 +825,8 @@ while True:
                             event="SL_MOVED_BE",
                             entry=position["entry"],
                             price=price,
-                            pips=0
+                            pips=0,
+                            confidence=position.get("confidence")
                         )
                         print(f"\n🛡️ SL MOVED TO BE | Trade {position['id']} | New SL: {position['entry']}")
 
@@ -675,7 +854,8 @@ while True:
                     entry=position["entry"],
                     price=price,
                     roi_pct=SL_ROI,
-                    pips=get_sl_pips()
+                    pips=get_sl_pips(),
+                    confidence=position.get("confidence")
                 )
 
                 if not position.get("telegram_tp_hit", False):
@@ -707,7 +887,8 @@ while True:
                     entry=position["entry"],
                     price=price,
                     roi_pct=TP_ROI_LABELS[50],
-                    pips=get_tp_pips(50)
+                    pips=get_tp_pips(50),
+                    confidence=position.get("confidence")
                 )
 
                 send_telegram_message(
@@ -736,6 +917,7 @@ while True:
                     print(f"\n📰 {trade_type} signal skipped | High-impact USD news window")
                 else:
                     trade_id = random.randint(1000, 9999)
+                    confidence = score_signal(row, trade_type)
 
                     position = {
                         "id": trade_id,
@@ -749,7 +931,8 @@ while True:
                         "max_pips_reached": 0,
                         "max_tp_index_reached": 0,
                         "telegram_tp_hit": False,
-                        "sl_moved_to_be": False
+                        "sl_moved_to_be": False,
+                        "confidence": confidence
                     }
 
                     log_trade_event(
@@ -757,16 +940,35 @@ while True:
                         trade_type=trade_type,
                         event="OPEN",
                         entry=price,
-                        price=price
+                        price=price,
+                        confidence=confidence
                     )
 
+                    # Send to premium group
                     msg = build_initial_signal_message(position)
                     telegram_response = send_telegram_message(msg)
 
                     if telegram_response and telegram_response.get("ok"):
                         position["telegram_message_id"] = telegram_response["result"]["message_id"]
 
-                    print(f"\n🚀 {trade_type} SIGNAL | Trade {trade_id} | Entry: {price}")
+                    # Evaluate for community channel
+                    community_sent = try_send_to_community(position, confidence)
+
+                    if community_sent:
+                        log_trade_event(
+                            trade_id=trade_id,
+                            trade_type=trade_type,
+                            event="COMMUNITY_SENT",
+                            entry=price,
+                            price=price,
+                            confidence=confidence,
+                            community_sent=True
+                        )
+
+                    print(
+                        f"\n🚀 {trade_type} SIGNAL | Trade {trade_id} | "
+                        f"Entry: {price} | Confidence: {confidence:.2%}"
+                    )
 
         time.sleep(1)
 
